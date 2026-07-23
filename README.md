@@ -38,8 +38,8 @@
   - Guarda y carga configuraciones completas en formato `.json`.
   - Botón de **Limpiar** para restablecer la aplicación a un estado por defecto limpio en 1 clic.
 
-- 🚀 **Ejecución Automatizada para Windows (`GESA.exe` / `start.bat`)**
-  - Incluye `GESA.exe` y `start.bat` que detectan e instalan Python, instalan las dependencias necesarias y ejecutan la aplicación de forma transparente.
+- 🚀 **Ejecución Automatizada para Windows (`GESA.exe`)**
+  - Incluye `GESA.exe` que detecta e instala Python, instala las dependencias necesarias y ejecuta la aplicación de forma transparente.
 
 ---
 
@@ -47,7 +47,7 @@
 
 - **Sistema Operativo:** Windows 10 / Windows 11 (64-bit).
 - **Microsoft Word:** Requerido para la combinación e integración de encabezados y numeración en los documentos `.docx`.
-- **Python:** Versión 3.10 o superior (el script `start.bat` o `GESA.exe` lo instala automáticamente si no existe).
+- **Python:** Versión 3.10 o superior (`GESA.exe` lo instala automáticamente si no existe).
 
 ---
 
@@ -57,7 +57,7 @@
 
 1. En la página de GitHub ([https://github.com/danielrozocom/gesa](https://github.com/danielrozocom/gesa)), haz clic en el botón verde **`< > Code`** y selecciona **`Download ZIP`**.
 2. Descomprime el archivo `.zip` descargado en cualquier carpeta de tu computadora.
-3. Haz **doble clic en `GESA.exe`** (o `start.bat`).
+3. Haz **doble clic en `GESA.exe`**.
 4. El programa verificará e instalará automáticamente Python y todas las librerías necesarias sin que tengas que configurar nada.
 
 ---
@@ -69,7 +69,7 @@
    git clone https://github.com/danielrozocom/gesa.git
    cd gesa
    ```
-2. Ejecuta `GESA.exe` o `start.bat` o arranca la aplicación directamente:
+2. Ejecuta `GESA.exe` o arranca la aplicación directamente:
    ```bash
    python desktop_app.py
    ```
