@@ -2160,7 +2160,22 @@ class DesktopApp(QMainWindow):
 
 
 if __name__ == "__main__":
+    try:
+        myappid = "danielrozocom.gesa.academic.v1"
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
+    app.setApplicationName("GESA")
+    app.setApplicationDisplayName("GESA")
+    app.setOrganizationName("GESA")
+    app.setDesktopFileName("GESA.lnk")
+
+    icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.png")
+    if os.path.exists(icon_file):
+        app.setWindowIcon(QIcon(icon_file))
+
     app.setStyle("Fusion")
     window = DesktopApp()
     window.show()

@@ -100,7 +100,12 @@ echo        TODO LISTO
 echo ========================================
 echo.
 
-python "%APP%"
+pythonw --version >nul 2>&1
+if not errorlevel 1 (
+    pythonw "%APP%"
+) else (
+    python "%APP%"
+)
 if errorlevel 1 (
     echo.
     echo [FAIL] La aplicacion se cerro con error
