@@ -1,0 +1,5 @@
+python-docx
+pywin32
+PyQt6
+qtawesome
+ipywidgets
