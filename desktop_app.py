@@ -73,8 +73,8 @@ class DateSelector(QWidget):
     def _update_display(self):
         d = self._date
         locale = QLocale(QLocale.Language.Spanish)
-        day_short = locale.dayName(d.dayOfWeek(), QLocale.FormatType.ShortFormat).upper()
-        self.display.setText(f"{day_short} {str(d.day()).zfill(2)}/{MONTH_REV[d.month()]}/{d.year()}")
+        day_full = locale.dayName(d.dayOfWeek(), QLocale.FormatType.LongFormat).capitalize()
+        self.display.setText(f"{day_full} {str(d.day()).zfill(2)}/{MONTH_REV[d.month()]}/{d.year()}")
 
     def _open_calendar(self):
         main_win = self.window()
@@ -1264,7 +1264,7 @@ class DesktopApp(QMainWindow):
         self.theme_btn.setIcon(self._make_icon(icon_name, "text"))
         self.theme_btn.setToolTip(f"{tip} | Clic: {self._next_theme_name()}")
         if hasattr(self, "logo_icon_lbl"):
-            self.logo_icon_lbl.setPixmap(self._get_svg_logo_pixmap(c["blue"], 26))
+            self.logo_icon_lbl.setPixmap(self._get_tinted_logo_pixmap(c["blue"], 26))
         self._refresh_icons()
         self.date_edit.btn.setIcon(self._make_icon("fa5s.calendar-alt", "muted"))
         for w in [self.date_edit.display, self.date_edit.btn]:
@@ -1301,18 +1301,27 @@ class DesktopApp(QMainWindow):
                 }}
             """)
 
-    def _get_svg_logo_pixmap(self, color_hex, size=26):
-        svg_data = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-          <path fill="{color_hex}" d="M140 40C95.8 40 60 75.8 60 120V392C60 436.2 95.8 472 140 472H372C416.2 472 452 436.2 452 392V120C452 75.8 416.2 40 372 40H140ZM100 120C100 97.9 117.9 80 140 80H372C394.1 80 412 97.9 412 120V320H100V120ZM100 360H412V392C412 414.1 394.1 432 372 432H140C117.9 432 100 414.1 100 392V360Z"/>
-          <path fill="{color_hex}" d="M232.5 277.5L173.5 218.5C167.3 212.3 157.1 212.3 150.9 218.5C144.7 224.7 144.7 234.9 150.9 241.1L221.2 311.4C227.4 317.6 237.6 317.6 243.8 311.4L361.1 194.1C367.3 187.9 367.3 177.7 361.1 171.5C354.9 165.3 344.7 165.3 338.5 171.5L232.5 277.5Z"/>
-        </svg>"""
-        renderer = QSvgRenderer(svg_data.encode('utf-8'))
-        pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        renderer.render(painter)
+    def _get_tinted_logo_pixmap(self, color_hex, size=26):
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.png")
+        if not os.path.exists(icon_path):
+            return QPixmap()
+
+        orig = QPixmap(icon_path).scaled(
+            size, size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+
+        tinted = QPixmap(orig.size())
+        tinted.fill(Qt.GlobalColor.transparent)
+
+        painter = QPainter(tinted)
+        painter.drawPixmap(0, 0, orig)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        painter.fillRect(tinted.rect(), QColor(color_hex))
         painter.end()
-        return pixmap
+
+        return tinted
 
     def _make_icon(self, name, color_key="muted"):
         c = self._theme_colors()
