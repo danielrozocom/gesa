@@ -17,7 +17,15 @@ venv.bak/
 Thumbs.db
 *.log
 
+# PyInstaller Build Folders
+build/
+dist/
+*.spec
+
 # Temp & Local scratch
 .tempmediaStorage/
 scratch/
+
+# Ignore executables EXCEPT GESA.exe
 *.exe
+!GESA.exe
