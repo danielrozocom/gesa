@@ -870,6 +870,12 @@ class DesktopApp(QMainWindow):
         self.setWindowTitle("GESA \u2014 Gestor de Evaluaciones de Suficiencia Acad\u00e9mica")
         self.setMinimumSize(1100, 720)
 
+        icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+        if not os.path.exists(icon_file):
+            icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.png")
+        if os.path.exists(icon_file):
+            self.setWindowIcon(QIcon(icon_file))
+
         self.settings = QSettings("GESA", "AcademicManager")
         saved_theme = str(self.settings.value("theme", "system"))
         self._theme = saved_theme if saved_theme in ["dark", "light", "system"] else "system"
@@ -2301,7 +2307,9 @@ if __name__ == "__main__":
     app.setOrganizationName("GESA")
     app.setDesktopFileName("GESA.lnk")
 
-    icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.png")
+    icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+    if not os.path.exists(icon_file):
+        icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.png")
     if os.path.exists(icon_file):
         app.setWindowIcon(QIcon(icon_file))
 

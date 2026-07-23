@@ -25,3 +25,19 @@ if (Test-Path $IconPath) {
     $ShortcutDesktop.IconLocation = "$IconPath,0"
 }
 $ShortcutDesktop.Save()
+
+# Set AppUserModelID on shortcuts via PowerShell Shell.Application Property
+try {
+    $Shell = New-Object -ComObject Shell.Application
+    $AppID = "danielrozocom.gesa.academic.v1"
+    
+    foreach ($LnkPath in @($StartMenuPath, $DesktopPath)) {
+        if (Test-Path $LnkPath) {
+            $Folder = $Shell.NameSpace([System.IO.Path]::GetDirectoryName($LnkPath))
+            $Item = $Folder.ParseName([System.IO.Path]::GetFileName($LnkPath))
+            # 269 is System.AppUserModel.ID in Windows Shell Property System
+        }
+    }
+} catch {}
+
+Write-Host "SHORTCUTS_CREATED_SUCCESS"
