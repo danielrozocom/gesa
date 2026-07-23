@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QComboBox, QListWidget,
     QListWidgetItem, QTextEdit, QProgressBar, QFrame, QSplitter,
     QFileDialog, QMessageBox, QAbstractItemView,
-    QListView, QDialog, QDialogButtonBox, QCalendarWidget, QSizePolicy,
+    QListView, QDialog, QDialogButtonBox, QCalendarWidget, QSizePolicy, QToolButton,
 )
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QLocale, QSettings
 from PyQt6.QtGui import QTextCharFormat, QColor, QPalette, QShortcut, QKeySequence, QIcon, QPainter, QPixmap
