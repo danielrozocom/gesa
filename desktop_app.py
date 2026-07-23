@@ -80,16 +80,69 @@ class DateSelector(QWidget):
         main_win = self.window()
         dlg = QDialog(main_win or self)
         dlg.setWindowTitle("Seleccionar fecha")
-        dlg.setMinimumWidth(340)
-
-        parent_ss = main_win.styleSheet() if main_win else ""
-        if parent_ss:
-            dlg.setStyleSheet(parent_ss)
+        dlg.setMinimumWidth(360)
 
         is_dark = True
         if hasattr(main_win, "_effective_theme"):
             is_dark = (main_win._effective_theme() == "dark")
         set_window_dark_mode(dlg.winId(), is_dark)
+
+        bg_color = "#18181b" if is_dark else "#ffffff"
+        text_color = "#fafafa" if is_dark else "#0f172a"
+        border_color = "#27272a" if is_dark else "#e2e8f0"
+        hover_bg = "#27272a" if is_dark else "#f1f5f9"
+        sel_bg = "#3b82f6" if is_dark else "#2563eb"
+        weekend_color = "#f87171" if is_dark else "#e11d48"
+
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background-color: {bg_color};
+                color: {text_color};
+                border-radius: 12px;
+            }}
+            QCalendarWidget {{
+                background-color: {bg_color};
+                color: {text_color};
+            }}
+            QCalendarWidget QWidget#qt_calendar_navigationbar {{
+                background-color: {bg_color};
+                border-bottom: 1px solid {border_color};
+                padding: 4px;
+            }}
+            QCalendarWidget QToolButton {{
+                color: {text_color};
+                background-color: transparent;
+                border-radius: 6px;
+                font-family: "Segoe UI";
+                font-size: 13px;
+                font-weight: 600;
+                padding: 4px 8px;
+            }}
+            QCalendarWidget QToolButton:hover {{
+                background-color: {hover_bg};
+            }}
+            QCalendarWidget QMenu {{
+                background-color: {bg_color};
+                color: {text_color};
+                border: 1px solid {border_color};
+            }}
+            QCalendarWidget QSpinBox {{
+                color: {text_color};
+                background-color: {hover_bg};
+                border-radius: 4px;
+                font-size: 13px;
+            }}
+            QCalendarWidget QTableView {{
+                background-color: {bg_color};
+                color: {text_color};
+                selection-background-color: {sel_bg};
+                selection-color: #ffffff;
+                font-family: "Segoe UI";
+                font-size: 13px;
+                outline: 0;
+                gridline-color: transparent;
+            }}
+        """)
 
         layout = QVBoxLayout(dlg)
         layout.setContentsMargins(16, 16, 16, 16)
@@ -100,10 +153,17 @@ class DateSelector(QWidget):
         cal.setGridVisible(False)
         cal.setLocale(QLocale(QLocale.Language.Spanish))
         cal.setFirstDayOfWeek(Qt.DayOfWeek.Monday)
+        cal.setVerticalHeaderFormat(QCalendarWidget.VerticalHeaderFormat.NoVerticalHeader)
 
-        theme_red = "#ef4444" if is_dark else "#dc2626"
+        prev_btn = cal.findChild(QToolButton, "qt_calendar_prevmonth")
+        next_btn = cal.findChild(QToolButton, "qt_calendar_nextmonth")
+        if prev_btn:
+            prev_btn.setIcon(qta.icon("fa5s.chevron-left", color=text_color))
+        if next_btn:
+            next_btn.setIcon(qta.icon("fa5s.chevron-right", color=text_color))
+
         fmt_weekend = QTextCharFormat()
-        fmt_weekend.setForeground(QColor(theme_red))
+        fmt_weekend.setForeground(QColor(weekend_color))
         cal.setWeekdayTextFormat(Qt.DayOfWeek.Saturday, fmt_weekend)
         cal.setWeekdayTextFormat(Qt.DayOfWeek.Sunday, fmt_weekend)
 
@@ -1301,27 +1361,19 @@ class DesktopApp(QMainWindow):
                 }}
             """)
 
-    def _get_tinted_logo_pixmap(self, color_hex, size=26):
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.png")
-        if not os.path.exists(icon_path):
-            return QPixmap()
-
-        orig = QPixmap(icon_path).scaled(
-            size, size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        )
-
-        tinted = QPixmap(orig.size())
-        tinted.fill(Qt.GlobalColor.transparent)
-
-        painter = QPainter(tinted)
-        painter.drawPixmap(0, 0, orig)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        painter.fillRect(tinted.rect(), QColor(color_hex))
+    def _get_svg_logo_pixmap(self, color_hex, size=26):
+        svg_data = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+          <rect x="24" y="14" width="152" height="172" rx="28" fill="none" stroke="{color_hex}" stroke-width="16"/>
+          <path d="M 40 142 L 160 142" fill="none" stroke="{color_hex}" stroke-width="16" stroke-linecap="round"/>
+          <path d="M 68 84 L 94 108 L 138 60" fill="none" stroke="{color_hex}" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>"""
+        renderer = QSvgRenderer(svg_data.encode('utf-8'))
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        renderer.render(painter)
         painter.end()
-
-        return tinted
+        return pixmap
 
     def _make_icon(self, name, color_key="muted"):
         c = self._theme_colors()
