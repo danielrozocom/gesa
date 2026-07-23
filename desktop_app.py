@@ -202,21 +202,21 @@ class DateSelector(QWidget):
 
 
 SHADCN_DARK = {
-    "bg": "#09090b", "card": "#18181b", "border": "#27272a",
-    "text": "#fafafa", "muted": "#a1a1aa",
-    "blue": "#3b82f6", "green": "#10b981", "red": "#ef4444",
-    "blue_hover": "#2563eb", "green_hover": "#059669", "red_hover": "#dc2626",
-    "input_bg": "#18181b",
-    "hover_bg": "#1f1f23",
+    "bg": "#0a0e17", "card": "#131927", "border": "#1e293b",
+    "text": "#f8fafc", "muted": "#94a3b8",
+    "blue": "#4f66a8", "green": "#10b981", "red": "#ef4444",
+    "blue_hover": "#364B87", "green_hover": "#059669", "red_hover": "#dc2626",
+    "input_bg": "#131927",
+    "hover_bg": "#1e293b",
 }
 
 SHADCN_LIGHT = {
-    "bg": "#f8fafc", "card": "#ffffff", "border": "#e2e8f0",
+    "bg": "#f4f6fa", "card": "#ffffff", "border": "#cbd5e1",
     "text": "#0f172a", "muted": "#64748b",
-    "blue": "#2563eb", "green": "#059669", "red": "#dc2626",
-    "blue_hover": "#1d4ed8", "green_hover": "#047857", "red_hover": "#b91c1c",
-    "input_bg": "#f8fafc",
-    "hover_bg": "#f1f5f9",
+    "blue": "#364B87", "green": "#059669", "red": "#dc2626",
+    "blue_hover": "#2b3c6d", "green_hover": "#047857", "red_hover": "#b91c1c",
+    "input_bg": "#ffffff",
+    "hover_bg": "#e2e8f0",
 }
 
 
@@ -1324,7 +1324,7 @@ class DesktopApp(QMainWindow):
         self.theme_btn.setIcon(self._make_icon(icon_name, "text"))
         self.theme_btn.setToolTip(f"{tip} | Clic: {self._next_theme_name()}")
         if hasattr(self, "logo_icon_lbl"):
-            self.logo_icon_lbl.setPixmap(self._get_tinted_logo_pixmap(c["blue"], 26))
+            self.logo_icon_lbl.setPixmap(self._get_svg_logo_pixmap(c["blue"], 26))
         self._refresh_icons()
         self.date_edit.btn.setIcon(self._make_icon("fa5s.calendar-alt", "muted"))
         for w in [self.date_edit.display, self.date_edit.btn]:
