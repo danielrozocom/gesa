@@ -21,6 +21,12 @@ import qtawesome as qta
 from Code import GRADES_INFO, merge_docx_with_guaranteed_header, expand_template
 
 
+try:
+    myappid = "danielrozocom.gesa.academic.v1"
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+except Exception:
+    pass
+
 MONTH_MAP = {"ENE": 1, "FEB": 2, "MAR": 3, "ABR": 4, "MAY": 5, "JUN": 6,
              "JUL": 7, "AGO": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DIC": 12}
 MONTH_REV = {v: k for k, v in MONTH_MAP.items()}

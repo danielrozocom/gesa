@@ -77,7 +77,7 @@ python -m pip install -r "%REQUIREMENTS%" -q
 echo [OK] Paquetes listos
 
 echo.
-echo [5/6] Verificando Microsoft Word...
+echo [5/6] Verificando Microsoft Word y registrando accesos directos...
 reg query "HKLM\SOFTWARE\Microsoft\Office" 2>nul >nul
 if not errorlevel 1 (
     echo [OK] Microsoft Word detectado
@@ -92,6 +92,9 @@ if not errorlevel 1 (
         if errorlevel 2 exit /b
     )
 )
+
+powershell -ExecutionPolicy Bypass -File "%~dp0create_shortcut.ps1" >nul 2>&1
+echo [OK] Acceso directo registrado en Menú Inicio y Escritorio (Búscalo como 'GESA' en Inicio)
 
 echo.
 echo [6/6] Arrancando aplicación...
