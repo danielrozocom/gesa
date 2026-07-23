@@ -38,8 +38,8 @@
   - Guarda y carga configuraciones completas en formato `.json`.
   - Botón de **Limpiar** para restablecer la aplicación a un estado por defecto limpio en 1 clic.
 
-- 🚀 **Ejecución Automatizada para Windows**
-  - Incluye `Iniciar.bat` que detecta/instala Python, instala las dependencias necesarias y ejecuta la aplicación de forma transparente.
+- 🚀 **Ejecución Automatizada para Windows (`GESA.exe` / `start.bat`)**
+  - Incluye `GESA.exe` y `start.bat` que detectan e instalan Python, instalan las dependencias necesarias y ejecutan la aplicación de forma transparente.
 
 ---
 
@@ -47,7 +47,7 @@
 
 - **Sistema Operativo:** Windows 10 / Windows 11 (64-bit).
 - **Microsoft Word:** Requerido para la combinación e integración de encabezados y numeración en los documentos `.docx`.
-- **Python:** Versión 3.10 o superior (el script `Iniciar.bat` lo instala automáticamente si no existe).
+- **Python:** Versión 3.10 o superior (el script `start.bat` o `GESA.exe` lo instala automáticamente si no existe).
 
 ---
 
@@ -57,7 +57,7 @@
 
 1. En la página de GitHub ([https://github.com/danielrozocom/gesa](https://github.com/danielrozocom/gesa)), haz clic en el botón verde **`< > Code`** y selecciona **`Download ZIP`**.
 2. Descomprime el archivo `.zip` descargado en cualquier carpeta de tu computadora.
-3. Haz **doble clic en el archivo `Iniciar.bat`**.
+3. Haz **doble clic en `GESA.exe`** (o `start.bat`).
 4. El programa verificará e instalará automáticamente Python y todas las librerías necesarias sin que tengas que configurar nada.
 
 ---
@@ -69,32 +69,7 @@
    git clone https://github.com/danielrozocom/gesa.git
    cd gesa
    ```
-2. Ejecuta `Iniciar.bat` o arranca la aplicación directamente:
-   ```bash
-   python desktop_app.py
-   ```
-
----
-
-### Opción 2: Instalación Manual (Desarrolladores)
-
-1. Clonar el repositorio:
-   ```bash
-   git clone https://github.com/danielrozocom/gesa.git
-   cd gesa
-   ```
-2. Crear un entorno virtual (opcional pero recomendado):
-   ```bash
-   python -m venv venv
-   venv\Scripts\activate
-   ```
-3. Instalación de dependencias:
-   ```bash
-   pip install -r requirements.txt
-   python -m pip install pywin32
-   python Scripts\pywin32_postinstall.py -install
-   ```
-4. Ejecutar la aplicación:
+2. Ejecuta `GESA.exe` o `start.bat` o arranca la aplicación directamente:
    ```bash
    python desktop_app.py
    ```
@@ -115,9 +90,10 @@
 
 ```text
 GESA/
+├── GESA.exe            # Lanzador ejecutable nativo de Windows con ícono
 ├── desktop_app.py      # Interfaz de usuario gráfica principal (PyQt6)
 ├── Code.py             # Motor de combinación de Word (python-docx / win32com)
-├── Iniciar.bat         # Script de arranque y auto-instalación para Windows
+├── start.bat           # Script de arranque y auto-instalación para Windows
 ├── requirements.txt    # Dependencias de Python
 ├── README.md           # Documentación principal
 └── .gitignore          # Archivos ignorados por Git

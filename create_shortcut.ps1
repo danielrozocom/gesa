@@ -2,7 +2,7 @@ $WshShell = New-Object -ComObject WScript.Shell
 $ExePath = [System.IO.Path]::Combine($PSScriptRoot, 'GESA.exe')
 $IconPath = [System.IO.Path]::Combine($PSScriptRoot, 'app_icon.ico')
 
-$TargetPath = if (Test-Path $ExePath) { $ExePath } else { [System.IO.Path]::Combine($PSScriptRoot, 'Iniciar.bat') }
+$TargetPath = if (Test-Path $ExePath) { $ExePath } else { [System.IO.Path]::Combine($PSScriptRoot, 'start.bat') }
 
 # Start Menu Shortcut (Searchable in Windows Start)
 $StartMenuPath = [System.IO.Path]::Combine($env:APPDATA, 'Microsoft\Windows\Start Menu\Programs\GESA.lnk')

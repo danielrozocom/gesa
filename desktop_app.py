@@ -1333,7 +1333,7 @@ class DesktopApp(QMainWindow):
             except Exception as e:
                 self._show_warning("Error de actualizaci\u00f3n", f"No se pudo consultar GitHub: {e}")
         else:
-            self._show_info("Modo independiente", "Para actualizar autom\u00e1ticamente desde GitHub, clona el repositorio con Git o ejecuta Iniciar.bat.")
+            self._show_info("Modo independiente", "Para actualizar autom\u00e1ticamente desde GitHub, clona el repositorio con Git o ejecuta GESA.exe o start.bat.")
 
     def _next_theme_name(self):
         order = ["dark", "light", "system"]
