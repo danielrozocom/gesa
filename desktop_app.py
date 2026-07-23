@@ -5,6 +5,7 @@ import threading
 import re
 import ctypes
 import copy
+import subprocess
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QListWidget,
@@ -1302,6 +1303,23 @@ class DesktopApp(QMainWindow):
         self._reg_icon(btn, icon_name, color_key)
         return btn
 
+    def _check_updates(self):
+        project_dir = os.path.dirname(os.abspath(__file__))
+        git_dir = os.path.join(project_dir, ".git")
+        if os.path.exists(git_dir):
+            try:
+                res = subprocess.run(["git", "pull", "origin", "main"], cwd=project_dir, capture_output=True, text=True, timeout=10)
+                out = (res.stdout or res.stderr or "").strip()
+                if "Already up to date" in out or "Ya est\u00e1 actualizado" in out or "Already up-to-date" in out:
+                    self._show_info("Actualizaciones", "La aplicaci\u00f3n ya est\u00e1 en la \u00faltima versi\u00f3n de GitHub.")
+                else:
+                    self._show_info("Actualizaci\u00f3n exitosa", f"Se han descargado las \u00faltimas novedades de GitHub:\n\n{out[:300]}")
+                    self._log("\ud83d\udd04 C\u00f3digo actualizado desde GitHub.")
+            except Exception as e:
+                self._show_warning("Error de actualizaci\u00f3n", f"No se pudo consultar GitHub: {e}")
+        else:
+            self._show_info("Modo independiente", "Para actualizar autom\u00e1ticamente desde GitHub, clona el repositorio con Git o ejecuta Iniciar.bat.")
+
     def _next_theme_name(self):
         order = ["dark", "light", "system"]
         names = {"dark": "Oscuro", "light": "Claro", "system": "Sistema"}
@@ -1380,6 +1398,10 @@ class DesktopApp(QMainWindow):
         header_layout.addWidget(subtitle)
 
         header_layout.addStretch()
+
+        self.update_btn = self._make_icon_btn("fa5s.sync-alt", "theme-btn", "Buscar actualizaciones desde GitHub", "text")
+        self.update_btn.clicked.connect(self._check_updates)
+        header_layout.addWidget(self.update_btn)
 
         self.theme_btn = QPushButton()
         self.theme_btn.setObjectName("theme-btn")
