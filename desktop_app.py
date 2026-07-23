@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QListView, QDialog, QDialogButtonBox, QCalendarWidget, QSizePolicy,
 )
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QLocale
-from PyQt6.QtGui import QTextCharFormat, QColor, QPalette, QShortcut, QKeySequence
+from PyQt6.QtGui import QTextCharFormat, QColor, QPalette, QShortcut, QKeySequence, QIcon
 
 import qtawesome as qta
 
@@ -806,6 +806,15 @@ class DesktopApp(QMainWindow):
         self._build()
         self._add_session()
         self._apply_theme()
+
+        icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.png")
+        if os.path.exists(icon_file):
+            app_icon = QIcon(icon_file)
+            self.setWindowIcon(app_icon)
+            app = QApplication.instance()
+            if app:
+                app.setWindowIcon(app_icon)
+
         self.showMaximized()
 
     # ─── undo / redo ───────────────────────────────────────────
