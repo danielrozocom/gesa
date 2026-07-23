@@ -273,7 +273,7 @@ QLabel.section-title {{
 QLabel#app-title {{
     font-size: 26px;
     font-weight: 800;
-    color: {c["blue"]};
+    color: {"#ffffff" if c["bg"] == "#0a0e17" else c["blue"]};
     letter-spacing: -0.5px;
 }}
 QLabel#app-subtitle {{
@@ -834,6 +834,36 @@ class GenerateWorker(QObject):
         self.generation_finished.emit(results)
 
 
+class UpdateWorker(QThread):
+    finished_signal = pyqtSignal(bool, str)
+
+    def run(self):
+        project_dir = os.path.dirname(os.path.abspath(__file__))
+        git_dir = os.path.join(project_dir, ".git")
+        if not os.path.exists(git_dir):
+            self.finished_signal.emit(
+                False,
+                "Modo independiente.\nPara actualizar autom\u00e1ticamente desde GitHub, clona el repositorio con Git o ejecuta start.bat."
+            )
+            return
+
+        try:
+            res = subprocess.run(
+                ["git", "pull", "origin", "main"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=12
+            )
+            out = (res.stdout or res.stderr or "").strip()
+            if "Already up to date" in out or "Ya est\u00e1 actualizado" in out or "Already up-to-date" in out:
+                self.finished_signal.emit(True, "La aplicaci\u00f3n ya est\u00e1 en la \u00faltima versi\u00f3n de GitHub.")
+            else:
+                self.finished_signal.emit(True, f"Se han descargado las \u00faltimas novedades de GitHub:\n\n{out[:300]}")
+        except Exception as e:
+            self.finished_signal.emit(False, f"No se pudo consultar GitHub: {e}")
+
+
 class DesktopApp(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1295,6 +1325,30 @@ class DesktopApp(QMainWindow):
         except Exception:
             return "dark"
 
+    def _check_updates(self):
+        if hasattr(self, "_update_thread") and self._update_thread and self._update_thread.isRunning():
+            return
+
+        if hasattr(self, "update_btn"):
+            self.update_btn.setEnabled(False)
+
+        self._log("\ud83d\udd04 Consultando actualizaciones en GitHub...")
+
+        self._update_thread = UpdateWorker()
+        self._update_thread.finished_signal.connect(self._on_update_finished)
+        self._update_thread.start()
+
+    def _on_update_finished(self, success, message):
+        if hasattr(self, "update_btn"):
+            self.update_btn.setEnabled(True)
+
+        if success:
+            first_line = message.splitlines()[0] if message else "Sincronizaci\u00f3n completada."
+            self._log(f"\u2713 {first_line}")
+            self._show_info("Actualizaciones", message)
+        else:
+            self._show_warning("Actualizaciones", message)
+
     def _effective_theme(self):
         if self._theme == "system":
             return self._detect_system_theme()
@@ -1323,8 +1377,9 @@ class DesktopApp(QMainWindow):
             tip = f"Tema: Sistema ({eff})"
         self.theme_btn.setIcon(self._make_icon(icon_name, "text"))
         self.theme_btn.setToolTip(f"{tip} | Clic: {self._next_theme_name()}")
+        logo_color = "#ffffff" if is_dark else c["blue"]
         if hasattr(self, "logo_icon_lbl"):
-            self.logo_icon_lbl.setPixmap(self._get_svg_logo_pixmap(c["blue"], 26))
+            self.logo_icon_lbl.setPixmap(self._get_svg_logo_pixmap(logo_color, 26))
         self._refresh_icons()
         self.date_edit.btn.setIcon(self._make_icon("fa5s.calendar-alt", "muted"))
         for w in [self.date_edit.display, self.date_edit.btn]:
