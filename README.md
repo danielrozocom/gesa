@@ -53,19 +53,26 @@
 
 ## 🚀 Instalación y Uso Rápido
 
-### Opción 1: Ejecución Automática (Recomendado para Usuarios)
+### 🟢 Opción 1: Para Usuarios Finales (Sin Consola / Fácil)
 
-1. Descarga o clona este repositorio:
+1. En la página de GitHub ([https://github.com/danielrozocom/gesa](https://github.com/danielrozocom/gesa)), haz clic en el botón verde **`< > Code`** y selecciona **`Download ZIP`**.
+2. Descomprime el archivo `.zip` descargado en cualquier carpeta de tu computadora.
+3. Haz **doble clic en el archivo `Iniciar.bat`**.
+4. El programa verificará e instalará automáticamente Python y todas las librerías necesarias sin que tengas que configurar nada.
+
+---
+
+### 💻 Opción 2: Usando Git / CMD (Desarrolladores)
+
+1. Abre la consola (CMD o PowerShell) y clona el repositorio:
    ```bash
    git clone https://github.com/danielrozocom/gesa.git
    cd gesa
    ```
-2. Haz doble clic en el archivo **`Iniciar.bat`**.
-3. El asistente se encargará automáticamente de:
-   - Verificarte e instalar Python (si no está presente).
-   - Actualizar `pip` e instalar los paquetes listados en `requirements.txt`.
-   - Verificar la instalación de Microsoft Word.
-   - Iniciar **GESA**.
+2. Ejecuta `Iniciar.bat` o arranca la aplicación directamente:
+   ```bash
+   python desktop_app.py
+   ```
 
 ---
 
