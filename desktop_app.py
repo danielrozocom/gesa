@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QFileDialog, QMessageBox, QAbstractItemView,
     QListView, QDialog, QDialogButtonBox, QCalendarWidget, QSizePolicy,
 )
-from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QLocale
+from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QLocale, QSettings
 from PyQt6.QtGui import QTextCharFormat, QColor, QPalette, QShortcut, QKeySequence, QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -870,7 +870,9 @@ class DesktopApp(QMainWindow):
         self.setWindowTitle("GESA \u2014 Gestor de Evaluaciones de Suficiencia Acad\u00e9mica")
         self.setMinimumSize(1100, 720)
 
-        self._theme = "system"
+        self.settings = QSettings("GESA", "AcademicManager")
+        saved_theme = str(self.settings.value("theme", "system"))
+        self._theme = saved_theme if saved_theme in ["dark", "light", "system"] else "system"
         self._icon_refs = []
 
         self._undo_stack = []
@@ -1450,22 +1452,7 @@ class DesktopApp(QMainWindow):
         self._reg_icon(btn, icon_name, color_key)
         return btn
 
-    def _check_updates(self):
-        project_dir = os.path.dirname(os.abspath(__file__))
-        git_dir = os.path.join(project_dir, ".git")
-        if os.path.exists(git_dir):
-            try:
-                res = subprocess.run(["git", "pull", "origin", "main"], cwd=project_dir, capture_output=True, text=True, timeout=10)
-                out = (res.stdout or res.stderr or "").strip()
-                if "Already up to date" in out or "Ya est\u00e1 actualizado" in out or "Already up-to-date" in out:
-                    self._show_info("Actualizaciones", "La aplicaci\u00f3n ya est\u00e1 en la \u00faltima versi\u00f3n de GitHub.")
-                else:
-                    self._show_info("Actualizaci\u00f3n exitosa", f"Se han descargado las \u00faltimas novedades de GitHub:\n\n{out[:300]}")
-                    self._log("\ud83d\udd04 C\u00f3digo actualizado desde GitHub.")
-            except Exception as e:
-                self._show_warning("Error de actualizaci\u00f3n", f"No se pudo consultar GitHub: {e}")
-        else:
-            self._show_info("Modo independiente", "Para actualizar autom\u00e1ticamente desde GitHub, clona el repositorio con Git o ejecuta GESA.exe o start.bat.")
+
 
     def _next_theme_name(self):
         order = ["dark", "light", "system"]
@@ -1483,6 +1470,8 @@ class DesktopApp(QMainWindow):
             self._theme = order[(idx + 1) % len(order)]
         except ValueError:
             self._theme = "dark"
+        if hasattr(self, "settings"):
+            self.settings.setValue("theme", self._theme)
         self._apply_theme()
 
     # ─── styled dialogs ────────────────────────────────────────
@@ -1492,7 +1481,8 @@ class DesktopApp(QMainWindow):
         dlg.setWindowTitle(title)
         dlg.setText(message)
         dlg.setIcon(QMessageBox.Icon.Information)
-        dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
+        dlg.setDefaultButton(btn)
         dlg.exec()
 
     def _show_warning(self, title, message):
@@ -1500,7 +1490,8 @@ class DesktopApp(QMainWindow):
         dlg.setWindowTitle(title)
         dlg.setText(message)
         dlg.setIcon(QMessageBox.Icon.Warning)
-        dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
+        dlg.setDefaultButton(btn)
         dlg.exec()
 
     def _show_error(self, title, message):
@@ -1508,7 +1499,8 @@ class DesktopApp(QMainWindow):
         dlg.setWindowTitle(title)
         dlg.setText(message)
         dlg.setIcon(QMessageBox.Icon.Critical)
-        dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
+        dlg.setDefaultButton(btn)
         dlg.exec()
 
     def _ask_yes_no(self, title, message):
@@ -1516,10 +1508,11 @@ class DesktopApp(QMainWindow):
         dlg.setWindowTitle(title)
         dlg.setText(message)
         dlg.setIcon(QMessageBox.Icon.Question)
-        dlg.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        return dlg.exec() == QMessageBox.StandardButton.Yes
+        yes_btn = dlg.addButton("Sí", QMessageBox.ButtonRole.YesRole)
+        no_btn = dlg.addButton("No", QMessageBox.ButtonRole.NoRole)
+        dlg.setDefaultButton(yes_btn)
+        dlg.exec()
+        return dlg.clickedButton() == yes_btn
 
     # ─── build UI ──────────────────────────────────────────────
 
