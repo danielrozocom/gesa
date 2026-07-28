@@ -60,15 +60,73 @@ def expand_template(template, context):
 CM_TO_PT = 72.0 / 2.54  # 1 cm = 28.3465 pt
 
 
-def add_dynamic_page_number_to_footer(paragraph):
-    font_name = "Century Gothic"
-    font_size = Pt(11)
+def get_document_default_font(doc):
+    """Detect default font name from document styles/defaults if present."""
+    if doc is None:
+        return None
+    try:
+        if hasattr(doc, 'styles') and 'Normal' in doc.styles:
+            normal = doc.styles['Normal']
+            if normal.font and normal.font.name:
+                return normal.font.name
+        styles_part = getattr(doc.part, 'styles_part', None)
+        if styles_part is not None:
+            rPr = styles_part.element.xpath('.//w:docDefaults/w:rPrDefault/w:rPr/w:rFonts')
+            if rPr:
+                ascii_font = rPr[0].get(qn('w:ascii')) or rPr[0].get(qn('w:hAnsi'))
+                if ascii_font:
+                    return ascii_font
+    except Exception:
+        pass
+    return None
+
+
+def freeze_subdocument_fonts(doc):
+    """Explicitly preserve/freeze subdocument run fonts and sizes so they do not inherit master template styles when merged."""
+    if doc is None:
+        return
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    sub_font = get_document_default_font(doc)
+    sub_size_val = None
+    try:
+        if hasattr(doc, 'styles') and 'Normal' in doc.styles:
+            n_font = doc.styles['Normal'].font
+            if n_font and n_font.size:
+                sub_size_val = str(int(n_font.size.pt * 2))
+    except Exception:
+        pass
+
+    for r_elem in doc.element.body.xpath('.//w:r'):
+        rPr = r_elem.find(f'{{{wns}}}rPr')
+        if rPr is None:
+            rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
+            r_elem.insert(0, rPr)
+
+        if sub_font:
+            rFonts = rPr.find(f'{{{wns}}}rFonts')
+            if rFonts is None:
+                rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{sub_font}" w:hAnsi="{sub_font}" w:cs="{sub_font}"/>')
+                rPr.append(rFonts)
+
+        if sub_size_val:
+            sz = rPr.find(f'{{{wns}}}sz')
+            if sz is None:
+                sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="{sub_size_val}"/>')
+                rPr.append(sz)
+            szCs = rPr.find(f'{{{wns}}}szCs')
+            if szCs is None:
+                szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="{sub_size_val}"/>')
+                rPr.append(szCs)
+
+
+def add_dynamic_page_number_to_footer(paragraph, doc=None):
+    font_name = get_document_default_font(doc) if doc else None
 
     def add_field(p, field_text, bold=True):
-        r_pr = f'<w:rPr><w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>'
+        r_pr_inner = f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>' if font_name else ''
         if bold:
-            r_pr += '<w:b/><w:bCs/>'
-        r_pr += '<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>'
+            r_pr_inner += '<w:b/><w:bCs/>'
+        r_pr = f'<w:rPr>{r_pr_inner}</w:rPr>' if r_pr_inner else ''
 
         fld_begin = parse_xml(f'<w:r {nsdecls("w")}>{r_pr}<w:fldChar w:fldCharType="begin"/></w:r>')
         fld_instr = parse_xml(f'<w:r {nsdecls("w")}>{r_pr}<w:instrText xml:space="preserve"> {field_text} </w:instrText></w:r>')
@@ -81,19 +139,19 @@ def add_dynamic_page_number_to_footer(paragraph):
         p._element.append(fld_end)
 
     r1 = paragraph.add_run("Página ")
-    r1.font.name = font_name
-    r1.font.size = font_size
+    if font_name:
+        r1.font.name = font_name
 
     add_field(paragraph, "PAGE", bold=True)
 
     r2 = paragraph.add_run(" de ")
-    r2.font.name = font_name
-    r2.font.size = font_size
+    if font_name:
+        r2.font.name = font_name
 
     add_field(paragraph, "NUMPAGES", bold=True)
 
 
-def setup_footer_page_number(footer):
+def setup_footer_page_number(footer, doc=None):
     for p in footer.paragraphs: p.text = ""
     for table in footer.tables:
         for row in table.rows:
@@ -101,7 +159,7 @@ def setup_footer_page_number(footer):
                 for p in cell.paragraphs: p.text = ""
     fp = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
     fp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    add_dynamic_page_number_to_footer(fp)
+    add_dynamic_page_number_to_footer(fp, doc=doc)
 
 
 def force_single_column(section):
@@ -133,8 +191,8 @@ def get_all_paragraphs(doc):
     return [Paragraph(p, doc) for p in doc.element.body.xpath('.//w:p')]
 
 
-def _prepend_run(paragraph, text, bold=False):
-    """Add a run at the BEGINNING of the paragraph."""
+def _prepend_run(paragraph, text, bold=False, font_name="Century Gothic", size_pt=11):
+    """Add a run at the BEGINNING of the paragraph formatted to Century Gothic 11pt."""
     escaped = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     new_r = parse_xml(f'<w:r {nsdecls("w")}><w:t xml:space="preserve">{escaped}</w:t></w:r>')
     first = paragraph._element.find(qn('w:r'))
@@ -146,8 +204,8 @@ def _prepend_run(paragraph, text, bold=False):
     r = Run(new_r, paragraph)
     if bold:
         r.bold = True
-    r.font.name = "Century Gothic"
-    r.font.size = Pt(11)
+    r.font.name = font_name
+    r.font.size = Pt(size_pt)
     return r
 
 
@@ -415,14 +473,31 @@ def _remove_tabs_from_pPr(p):
         pPr.remove(tabs)
     for t_elem in list(p._element.xpath('.//w:tab')):
         parent = t_elem.getparent()
-        if parent is not None:
-            parent.remove(t_elem)
+def _ensure_ends_with_period(paragraph):
+    text = paragraph.text.strip()
+    if text and not text.endswith(('.', ':', ';', '!', '?', ')', ']', '}')):
+        wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+        t_elems = paragraph._element.xpath('.//w:t')
+        if t_elems:
+            for t_elem in reversed(t_elems):
+                if t_elem.text and t_elem.text.strip():
+                    t_elem.text = t_elem.text.rstrip() + '.'
+                    break
+            else:
+                t_elems[-1].text = (t_elems[-1].text or "") + "."
+        else:
+            paragraph.add_run('.')
 
 
 def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="Century Gothic"):
     text = re.sub(r'\s+', ' ', p.text.replace('\t', ' ')).strip()
     m = re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
     if m and not _has_drawing(p._element):
+        raw_val = m.group(2).strip()
+        if not raw_val or raw_val.strip(' .:-') == '':
+            _safe_remove_para(p)
+            return True
+
         raw_label = m.group(1).lower()
         if force_lang == 'en':
             label = "Competence" if ('compet' in raw_label and 'competencia' not in raw_label) or 'competence' in raw_label else "Component"
@@ -440,7 +515,7 @@ def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="C
             else:
                 label = "Componente"
         
-        content = _normalize_case(m.group(2).strip())
+        content = _normalize_case(raw_val)
         if content and not content.endswith(('.', ':', ';', '!', '?')):
             content += '.'
         _remove_tabs_from_pPr(p)
@@ -498,6 +573,7 @@ def format_paragraph(paragraph, doc_ref):
             _prepend_run(paragraph, f"{mo.group(2).upper()}. ", bold=True)
             _remove_numpr(paragraph)
         remove_indents(paragraph)
+        _ensure_ends_with_period(paragraph)
         return
     # Question number — only bold if not already
     mn = re.match(r'^(\s*[\(\[\{]?(\d+)(?:\s*[\.\)\]\}\-\:\/]+\s*|\s+))(?![\d\.])', text)
@@ -545,25 +621,26 @@ def set_single_line_spacing(paragraph):
     pf = paragraph.paragraph_format
     pf.space_before = Pt(0)
     pf.space_after = Pt(0)
-    from docx.shared import Pt as _Pt
-    from docx.oxml.ns import qn as _qn
+    pf.line_spacing = 1.0
     pPr = paragraph._element.get_or_add_pPr()
-    sp = pPr.find(_qn('w:spacing'))
+    sp = pPr.find(qn('w:spacing'))
     if sp is None:
         sp = parse_xml(f'<w:spacing {nsdecls("w")} w:line="240" w:lineRule="auto" w:before="0" w:after="0"/>')
-        # Insert spacing before w:ind or w:numPr to maintain schema order
-        ind_elem = pPr.find(_qn('w:ind'))
-        numPr_elem = pPr.find(_qn('w:numPr'))
+        ind_elem = pPr.find(qn('w:ind'))
+        numPr_elem = pPr.find(qn('w:numPr'))
         ref_elem = ind_elem or numPr_elem
         if ref_elem is not None:
             ref_elem.addprevious(sp)
         else:
             pPr.append(sp)
     else:
-        sp.set(_qn('w:line'), '240')
-        sp.set(_qn('w:lineRule'), 'auto')
-        sp.set(_qn('w:before'), '0')
-        sp.set(_qn('w:after'), '0')
+        sp.set(qn('w:line'), '240')
+        sp.set(qn('w:lineRule'), 'auto')
+        sp.set(qn('w:before'), '0')
+        sp.set(qn('w:after'), '0')
+        for key in ['beforeAutospacing', 'afterAutospacing', 'beforeLines', 'afterLines']:
+            if qn(f'w:{key}') in sp.attrib:
+                del sp.attrib[qn(f'w:{key}')]
 
 
 def _has_drawing(para_element):
@@ -606,9 +683,6 @@ def inject_list_definitions(doc, start_number=1):
                         <w:ind w:left="360" w:hanging="360"/>
                     </w:pPr>
                     <w:rPr>
-                        <w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Century Gothic"/>
-                        <w:sz w:val="22"/>
-                        <w:szCs w:val="22"/>
                         <w:b w:val="1"/>
                     </w:rPr>
                 </w:lvl>
@@ -630,9 +704,6 @@ def inject_list_definitions(doc, start_number=1):
                         <w:ind w:left="360" w:hanging="360"/>
                     </w:pPr>
                     <w:rPr>
-                        <w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Century Gothic"/>
-                        <w:sz w:val="22"/>
-                        <w:szCs w:val="22"/>
                         <w:b w:val="1"/>
                     </w:rPr>
                 </w:lvl>
@@ -716,6 +787,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
             numPr = parse_xml(f'<w:numPr {nsdecls("w")}><w:ilvl w:val="0"/><w:numId w:val="{o_num_id}"/></w:numPr>')
             pPr.append(numPr)
             strip_leading_tabs(p)
+            _ensure_ends_with_period(p)
             continue
             
         # Check Question
@@ -747,9 +819,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
 
 def apply_formatting_to_document(doc):
     font_name = "Century Gothic"
-    font_size = Pt(11)
     from docx.text.paragraph import Paragraph
-    from docx.text.run import Run
     
     # Process all paragraphs in the document body
     for p_elem in doc.element.body.xpath('.//w:p'):
@@ -759,7 +829,6 @@ def apply_formatting_to_document(doc):
             para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             
         _remove_numpr(para)
-        _clear_paragraph_style_level(para)
         format_paragraph(para, doc)
         set_single_line_spacing(para)
         strip_leading_tabs(para)
@@ -768,9 +837,9 @@ def apply_formatting_to_document(doc):
         if not para.runs and not _has_drawing(p_elem):
             _add_styled_run(para, "", bold=False, size_pt=11, font_name=font_name)
 
-    # Format all runs in the entire document XML (including text boxes, shapes, tables, etc.)
+    # Format all runs in the document BODY XML (excluding headers/footers)
     wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-    for r_elem in doc.element.xpath('.//w:r'):
+    for r_elem in doc.element.body.xpath('.//w:r'):
         rPr = r_elem.find(f'{{{wns}}}rPr')
         if rPr is None:
             rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
@@ -800,6 +869,19 @@ def apply_formatting_to_document(doc):
             rPr.append(szCs)
         else:
             szCs.set(qn('w:val'), '22')
+
+    # Ensure numbering.xml has 11pt font size (22 half-pts) for all list bullets/numbers
+    try:
+        if hasattr(doc.part, 'numbering_part') and doc.part.numbering_part is not None:
+            num_xml = doc.part.numbering_part.element
+            for sz in num_xml.xpath('.//w:sz | .//w:szCs'):
+                sz.set(qn('w:val'), '22')
+            for rFonts in num_xml.xpath('.//w:rFonts'):
+                rFonts.set(qn('w:ascii'), font_name)
+                rFonts.set(qn('w:hAnsi'), font_name)
+                rFonts.set(qn('w:cs'), font_name)
+    except Exception:
+        pass
 
 
 def _safe_remove_para(p):
@@ -977,25 +1059,25 @@ def split_inline_competencia_and_componente(doc):
             p_elem = p._element
             parent = p_elem.getparent()
             if parent is not None:
-                p1_xml = parse_xml(f'<w:p {nsdecls("w")}/>')
-                p2_xml = parse_xml(f'<w:p {nsdecls("w")}/>')
+                if comp_val.strip(' .:-'):
+                    p1_xml = parse_xml(f'<w:p {nsdecls("w")}/>')
+                    p_elem.addprevious(p1_xml)
+                    p1_obj = Paragraph(p1_xml, doc)
+                    p1_obj.text = f"{comp_label}: {comp_val}"
+                    _format_competencia_or_componente_paragraph(p1_obj)
                 
-                p_elem.addprevious(p1_xml)
-                p_elem.addprevious(p2_xml)
-                
-                p1_obj = Paragraph(p1_xml, doc)
-                p2_obj = Paragraph(p2_xml, doc)
-                
-                p1_obj.text = f"{comp_label}: {comp_val}"
-                p2_obj.text = f"{compo_label}: {compo_val}"
-                _format_competencia_or_componente_paragraph(p1_obj)
-                _format_competencia_or_componente_paragraph(p2_obj)
+                if compo_val.strip(' .:-'):
+                    p2_xml = parse_xml(f'<w:p {nsdecls("w")}/>')
+                    p_elem.addprevious(p2_xml)
+                    p2_obj = Paragraph(p2_xml, doc)
+                    p2_obj.text = f"{compo_label}: {compo_val}"
+                    _format_competencia_or_componente_paragraph(p2_obj)
                 
                 parent.remove(p_elem)
 
 
 def process_competencias_and_componentes(doc):
-    font_name = "Century Gothic"
+    font_name = get_document_default_font(doc)
 
     # Step 0: Extraer Competencia/Componente atrapados en tablas a párrafos normales libres
     convert_competencia_tables_to_paragraphs(doc)
@@ -1242,6 +1324,7 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         if not os.path.exists(fp):
             continue
         sd = Document(fp)
+        freeze_subdocument_fonts(sd)
         _resolve_autonumbering(sd)
         cur = apply_renumbering_and_ranges(sd, cur)
         apply_formatting_to_document(sd)
@@ -1297,20 +1380,6 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
             ConfirmConversions=False, ReadOnly=False,
             AddToRecentFiles=False)
         time.sleep(0.2)
-
-        # Compact margins and set single column
-        sec1 = doc.Sections(1)
-        sec1.PageSetup.TopMargin = CM_TO_PT * 1.2
-        sec1.PageSetup.BottomMargin = CM_TO_PT * 1.2
-        sec1.PageSetup.LeftMargin = CM_TO_PT * 1.2
-        sec1.PageSetup.RightMargin = CM_TO_PT * 1.2
-        sec1.PageSetup.HeaderDistance = CM_TO_PT * 0.5
-        sec1.PageSetup.FooterDistance = CM_TO_PT * 0.8
-        for s_idx in range(1, doc.Sections.Count + 1):
-            try:
-                doc.Sections(s_idx).PageSetup.TextColumns.SetCount(1)
-            except:
-                pass
 
         # Insert sub-documents
         for i, tp in enumerate(temp_subs):
@@ -1398,14 +1467,15 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         titlePg = sectPr.find(qn('w:titlePg'))
         if titlePg is not None:
             sectPr.remove(titlePg)
-        # Compact margins
-        apply_subsequent_page_setup(sec)
         # Footer page number
         sec.footer.is_linked_to_previous = False
-        setup_footer_page_number(sec.footer)
+        setup_footer_page_number(sec.footer, doc=final)
 
     # Apply native numbering to the fully merged document
     apply_native_lists_to_final_doc(final, start_offset=start_offset)
+
+    # Re-apply global document formatting to guarantee 11pt font size and single line spacing on all elements
+    apply_formatting_to_document(final)
 
     if os.path.exists(output_path):
         for _ in range(5):

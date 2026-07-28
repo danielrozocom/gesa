@@ -225,6 +225,10 @@ SHADCN_DARK = {
     "blue_hover": "#364B87", "green_hover": "#059669", "red_hover": "#dc2626",
     "input_bg": "#131927",
     "hover_bg": "#1e293b",
+    "disabled_bg": "#1e293b",
+    "disabled_text": "#64748b",
+    "red_disabled": "#7f1d1d",
+    "red_disabled_text": "#fca5a5",
 }
 
 SHADCN_LIGHT = {
@@ -234,6 +238,10 @@ SHADCN_LIGHT = {
     "blue_hover": "#2b3c6d", "green_hover": "#047857", "red_hover": "#b91c1c",
     "input_bg": "#ffffff",
     "hover_bg": "#e2e8f0",
+    "disabled_bg": "#e2e8f0",
+    "disabled_text": "#94a3b8",
+    "red_disabled": "#fee2e2",
+    "red_disabled_text": "#991b1b",
 }
 
 
@@ -507,6 +515,11 @@ QPushButton {{
     border: none;
     font-weight: 600;
 }}
+QPushButton:disabled {{
+    background-color: {c["disabled_bg"]};
+    color: {c["disabled_text"]};
+    border: none;
+}}
 QPushButton::icon {{
     margin-right: 4px;
 }}
@@ -519,6 +532,13 @@ QPushButton#btn-primary {{
 QPushButton#btn-primary:hover {{
     background-color: {c["blue_hover"]};
 }}
+QPushButton#btn-primary:pressed {{
+    background-color: {c["blue_hover"]};
+}}
+QPushButton#btn-primary:disabled {{
+    background-color: {c["disabled_bg"]};
+    color: {c["disabled_text"]};
+}}
 QPushButton#btn-green {{
     background-color: {c["green"]};
     color: #ffffff;
@@ -528,6 +548,13 @@ QPushButton#btn-green {{
 QPushButton#btn-green:hover {{
     background-color: {c["green_hover"]};
 }}
+QPushButton#btn-green:pressed {{
+    background-color: {c["green_hover"]};
+}}
+QPushButton#btn-green:disabled {{
+    background-color: {c["disabled_bg"]};
+    color: {c["disabled_text"]};
+}}
 QPushButton#btn-red {{
     background-color: {c["red"]};
     color: #ffffff;
@@ -536,6 +563,14 @@ QPushButton#btn-red {{
 }}
 QPushButton#btn-red:hover {{
     background-color: {c["red_hover"]};
+}}
+QPushButton#btn-red:pressed {{
+    background-color: {c["red_hover"]};
+}}
+QPushButton#btn-red:disabled {{
+    background-color: {c["red_disabled"]};
+    color: {c["red_disabled_text"]};
+    border: none;
 }}
 QToolTip {{
     background-color: {c["card"]};
@@ -559,6 +594,14 @@ QPushButton#btn-outline:hover {{
     border-color: {c["blue"]};
     color: {c["blue"]};
 }}
+QPushButton#btn-outline:pressed {{
+    background-color: {c["hover_bg"]};
+}}
+QPushButton#btn-outline:disabled {{
+    background-color: {c["card"]};
+    color: {c["muted"]};
+    border: 1px solid {c["border"]};
+}}
 QPushButton#btn-ghost {{
     background-color: transparent;
     color: {c["text"]};
@@ -569,6 +612,12 @@ QPushButton#btn-ghost {{
 }}
 QPushButton#btn-ghost:hover {{
     background-color: {c["hover_bg"]};
+}}
+QPushButton#btn-ghost:pressed {{
+    background-color: {c["hover_bg"]};
+}}
+QPushButton#btn-ghost:disabled {{
+    color: {c["muted"]};
 }}
 QPushButton#btn-icon {{
     background-color: {c["card"]};
@@ -584,6 +633,14 @@ QPushButton#btn-icon:hover {{
     color: {c["blue"]};
     border-color: {c["blue"]};
 }}
+QPushButton#btn-icon:pressed {{
+    background-color: {c["hover_bg"]};
+}}
+QPushButton#btn-icon:disabled {{
+    background-color: {c["card"]};
+    color: {c["muted"]};
+    border: 1px solid {c["border"]};
+}}
 QPushButton#btn-add {{
     background-color: {c["card"]};
     color: {c["green"]};
@@ -597,6 +654,14 @@ QPushButton#btn-add:hover {{
     background-color: {c["hover_bg"]};
     color: {c["green"]};
     border-color: {c["green"]};
+}}
+QPushButton#btn-add:pressed {{
+    background-color: {c["hover_bg"]};
+}}
+QPushButton#btn-add:disabled {{
+    background-color: {c["card"]};
+    color: {c["muted"]};
+    border: 1px solid {c["border"]};
 }}
 QPushButton#btn-del {{
     background-color: {c["card"]};
@@ -612,6 +677,14 @@ QPushButton#btn-del:hover {{
     color: {c["red"]};
     border-color: {c["red"]};
 }}
+QPushButton#btn-del:pressed {{
+    background-color: {c["hover_bg"]};
+}}
+QPushButton#btn-del:disabled {{
+    background-color: {c["card"]};
+    color: {c["muted"]};
+    border: 1px solid {c["border"]};
+}}
 QPushButton#theme-btn {{
     background-color: {c["card"]};
     color: {c["text"]};
@@ -626,6 +699,9 @@ QPushButton#theme-btn:hover {{
     background-color: {c["hover_bg"]};
     border-color: {c["blue"]};
     color: {c["blue"]};
+}}
+QPushButton#theme-btn:pressed {{
+    background-color: {c["hover_bg"]};
 }}
 QFrame#card {{
     background-color: {c["card"]};
@@ -2459,27 +2535,27 @@ class DesktopApp(QMainWindow):
 
         qd = QDate.currentDate()
         self.sessions = [{
-            "name": "Sesi\u00f3n 1",
+            "name": "Sesión 1",
             "day": str(qd.day()),
             "month": MONTH_REV[qd.month()],
             "year": str(qd.year()),
             "subsessions": [{
-                "name": "Subsesi\u00f3n 1.1",
+                "name": "Subsesión 1.1",
                 "files": []
             }],
         }]
         self._selected_session = 0
         self._selected_sub = 0
         self._refresh_sessions()
-        self._log("\ud83e\uddf9 Configuraci\u00f3n limpiada por defecto.")
+        self._log("🧹 Configuración limpiada por defecto.")
 
     def _import_config(self):
         if self.sessions and any(sub.get("files") for s in self.sessions for sub in s.get("subsessions", [])):
-            if self._ask_yes_no("Importar configuraci\u00f3n", "\u00bfDeseas limpiar la configuraci\u00f3n actual antes de importar la nueva?"):
+            if self._ask_yes_no("Importar configuración", "¿Deseas limpiar la configuración actual antes de importar la nueva?"):
                 self._save_state_for_undo()
 
         path, _ = QFileDialog.getOpenFileName(
-            self, "Importar configuraci\u00f3n",
+            self, "Importar configuración",
             "", "JSON (*.json)")
         if not path:
             return
@@ -2487,7 +2563,7 @@ class DesktopApp(QMainWindow):
             cfg = json.load(f)
         self._apply_config(cfg)
         total = sum(len(sub["files"]) for s in self.sessions for sub in s["subsessions"])
-        self._log(f"Configuraci\u00f3n importada: {path} ({total} archivos)")
+        self._log(f"Configuración importada: {path} ({total} archivos)")
 
     # ─── generate all & stop ───────────────────────────────────
 
@@ -2496,6 +2572,17 @@ class DesktopApp(QMainWindow):
             self._stop_requested = True
             self.stop_btn.setEnabled(False)
             self.stop_btn.setText("  Cancelando...")
+            self.stop_btn.setStyleSheet("""
+                QPushButton {
+                    background-color: #7f1d1d;
+                    color: #fca5a5;
+                    border: 1px solid #991b1b;
+                    border-radius: 6px;
+                    font-weight: 700;
+                    font-size: 13px;
+                    min-height: 40px;
+                }
+            """)
             self.status.setText("Cancelando...")
             self._set_status_color("orange")
             self._log("\u26a0\ufe0f Cancelaci\u00f3n solicitada por el usuario...")
