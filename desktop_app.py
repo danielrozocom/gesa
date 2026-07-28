@@ -1302,6 +1302,9 @@ class DesktopApp(QMainWindow):
         if not paths:
             return
 
+        if len(paths) > 1:
+            paths = list(reversed(paths))
+
         self._save_state_for_undo()
         chosen_dir = os.path.dirname(paths[0])
         resolved_any = False
@@ -1545,6 +1548,10 @@ class DesktopApp(QMainWindow):
         dlg.setText(message)
         dlg.setIcon(QMessageBox.Icon.Information)
         btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
+        c = self._theme_colors()
+        set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
+        dlg.setStyleSheet(f"QMessageBox {{ background-color: {c['card']}; color: {c['text']}; }} QMessageBox QLabel {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}")
+        btn.setStyleSheet(f"QPushButton {{ background-color: {c['blue']}; color: #ffffff; border: none; border-radius: 6px; padding: 7px 22px; font-weight: 600; min-width: 75px; }} QPushButton:hover {{ background-color: {c['blue_hover']}; }}")
         dlg.setDefaultButton(btn)
         dlg.exec()
 
@@ -1554,6 +1561,10 @@ class DesktopApp(QMainWindow):
         dlg.setText(message)
         dlg.setIcon(QMessageBox.Icon.Warning)
         btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
+        c = self._theme_colors()
+        set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
+        dlg.setStyleSheet(f"QMessageBox {{ background-color: {c['card']}; color: {c['text']}; }} QMessageBox QLabel {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}")
+        btn.setStyleSheet(f"QPushButton {{ background-color: {c['blue']}; color: #ffffff; border: none; border-radius: 6px; padding: 7px 22px; font-weight: 600; min-width: 75px; }} QPushButton:hover {{ background-color: {c['blue_hover']}; }}")
         dlg.setDefaultButton(btn)
         dlg.exec()
 
@@ -1563,6 +1574,10 @@ class DesktopApp(QMainWindow):
         dlg.setText(message)
         dlg.setIcon(QMessageBox.Icon.Critical)
         btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
+        c = self._theme_colors()
+        set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
+        dlg.setStyleSheet(f"QMessageBox {{ background-color: {c['card']}; color: {c['text']}; }} QMessageBox QLabel {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}")
+        btn.setStyleSheet(f"QPushButton {{ background-color: {c['red']}; color: #ffffff; border: none; border-radius: 6px; padding: 7px 22px; font-weight: 600; min-width: 75px; }} QPushButton:hover {{ background-color: {c['red_hover']}; }}")
         dlg.setDefaultButton(btn)
         dlg.exec()
 
@@ -1571,8 +1586,45 @@ class DesktopApp(QMainWindow):
         dlg.setWindowTitle(title)
         dlg.setText(message)
         dlg.setIcon(QMessageBox.Icon.Question)
-        yes_btn = dlg.addButton("Sí", QMessageBox.ButtonRole.YesRole)
-        no_btn = dlg.addButton("No", QMessageBox.ButtonRole.NoRole)
+        yes_btn = dlg.addButton("  S\u00ed  ", QMessageBox.ButtonRole.YesRole)
+        no_btn = dlg.addButton("  No  ", QMessageBox.ButtonRole.NoRole)
+        
+        c = self._theme_colors()
+        set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
+        
+        dlg.setStyleSheet(f"QMessageBox {{ background-color: {c['card']}; color: {c['text']}; }} QMessageBox QLabel {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}")
+        
+        yes_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c["blue"]};
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 7px 22px;
+                font-weight: 600;
+                min-width: 75px;
+            }}
+            QPushButton:hover {{
+                background-color: {c["blue_hover"]};
+            }}
+        """)
+        
+        no_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                color: {c["text"]};
+                border: 1px solid {c["border"]};
+                border-radius: 6px;
+                padding: 7px 22px;
+                font-weight: 500;
+                min-width: 75px;
+            }}
+            QPushButton:hover {{
+                background-color: {c["hover_bg"]};
+                border-color: {c["text"]};
+            }}
+        """)
+
         dlg.setDefaultButton(yes_btn)
         dlg.exec()
         return dlg.clickedButton() == yes_btn
@@ -2292,16 +2344,26 @@ class DesktopApp(QMainWindow):
             if not sub["files"]
         ]
         if empty_subs:
+            count = len(empty_subs)
             preview_subs = "\n".join(f"  \u2022 {name}" for name in empty_subs[:6])
-            if len(empty_subs) > 6:
-                preview_subs += f"\n  ...y {len(empty_subs) - 6} subsesi\u00f3n(es) m\u00e1s"
+            if count > 6:
+                rem = count - 6
+                rem_str = "1 subsesi\u00f3n m\u00e1s" if rem == 1 else f"{rem} subsesiones m\u00e1s"
+                preview_subs += f"\n  ...y {rem_str}"
+
+            if count == 1:
+                dlg_title = "Subsesi\u00f3n sin archivos"
+                msg_header = "Se detect\u00f3 1 subsesi\u00f3n sin archivos asignados:"
+            else:
+                dlg_title = "Subsesiones sin archivos"
+                msg_header = f"Se detectaron {count} subsesiones sin archivos asignados:"
             
             msg = (
-                f"Se detectaron {len(empty_subs)} subsesi\u00f3n(es) sin archivos asignados:\n\n"
+                f"{msg_header}\n\n"
                 f"{preview_subs}\n\n"
                 "\u00bfDeseas omitir este aviso y continuar con la generaci\u00f3n de las dem\u00e1s subsesiones?"
             )
-            if not self._ask_yes_no("Subsesiones sin archivos", msg):
+            if not self._ask_yes_no(dlg_title, msg):
                 return
 
         self.processing = True

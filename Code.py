@@ -375,10 +375,41 @@ def format_paragraph(paragraph, doc_ref):
         else:
             paragraph.text = ""
         return
+def _normalize_case(text):
+    text = text.strip()
+    if not text:
+        return ""
+    if text.isupper() and len(text) > 3:
+        words = text.lower().split()
+        if words:
+            words[0] = words[0].capitalize()
+            connectors = {'y', 'e', 'o', 'u', 'de', 'del', 'la', 'las', 'los', 'el', 'en', 'con', 'por', 'para', 'a', 'al'}
+            result = [words[0]]
+            for w in words[1:]:
+                result.append(w.lower() if w.lower() in connectors else w.capitalize())
+            return " ".join(result)
+    return text
+
+
+def format_paragraph(paragraph, doc_ref):
+    text = paragraph.text
+    if not text.strip():
+        return
+
+    # Strip all indents by default for clean flush-left alignment
+    remove_indents(paragraph)
+
+    if re.search(r'(NOMBRE|APELLIDO|ESTUDIANTE|ALUMNO|CURSO|GRADO|FECHA|CÓDIGO|CODIGO|NAME|DATE|CODE)\s*:\s*[_]{2,}', text, re.IGNORECASE):
+        if _has_drawing(paragraph._element):
+            for t in paragraph._element.xpath('.//w:t'):
+                t.text = ""
+        else:
+            paragraph.text = ""
+        return
     mc = re.match(r'^(Componente|Competencia)\s*:\s*(.*)$', text, re.IGNORECASE)
     if mc:
         label = mc.group(1).capitalize()
-        content = mc.group(2).strip()
+        content = _normalize_case(mc.group(2).strip())
         if _has_drawing(paragraph._element):
             t_elems = paragraph._element.xpath('.//w:t')
             if t_elems:
@@ -390,14 +421,14 @@ def format_paragraph(paragraph, doc_ref):
             rb = paragraph.add_run(f"{label}: "); rb.bold = True
             rt = paragraph.add_run(content); rt.bold = False
         return
-    # Option letter A–E — format prefix
-    mo = re.match(r'^(\s*[\(\[\{]?([a-eA-E])\s*[\.\)\]\}\-\:\/]\s)(?!\d)', text)
+    # Option letter A–E — format prefix (supports A), a), A., a., (A), A)text)
+    mo = re.match(r'^(\s*[\(\[\{]?([a-eA-E])\s*[\.\)\]\}\-\:\/]\s*)(?!\d)', text)
     if mo:
         runs = paragraph.runs
         first = runs[0] if runs else None
         already_good = (
             first is not None
-            and first.text.strip().upper() == mo.group(2).upper()
+            and first.text.strip().upper() == (mo.group(2).upper() + ".")
             and first.bold
         )
         if not already_good:
@@ -433,7 +464,7 @@ def reset_letter_sequence(doc):
             letter_index = 0
             continue
 
-        mo = re.match(r'^(\s*[\(\[\{]?)([a-eA-E])(\s*[\.\)\]\}\-\:\/]\s)', text)
+        mo = re.match(r'^(\s*[\(\[\{]?)([a-eA-E])(\s*[\.\)\]\}\-\:\/]\s*)', text)
         if mo:
             current = mo.group(2).upper()
             expected = chr(ord('A') + letter_index) if letter_index < 5 else None
@@ -779,6 +810,71 @@ def replace_in_all(tpl, replacements_map):
             replace_xml_text(list(h._element), replacements_map)
 
 
+def process_competencias_and_componentes(doc):
+    all_paras = get_all_paragraphs(doc)
+    last_comp = None
+    last_compo = None
+
+    i = 0
+    while i < len(all_paras):
+        p = all_paras[i]
+        text = p.text.strip()
+
+        # Check if current is Componente and next is Competencia -> Swap order so Competencia is FIRST!
+        if i + 1 < len(all_paras):
+            next_p = all_paras[i + 1]
+            m_curr_compo = re.match(r'^Componente\s*:\s*(.*)$', text, re.IGNORECASE)
+            m_next_comp = re.match(r'^Competencia\s*:\s*(.*)$', next_p.text.strip(), re.IGNORECASE)
+            if m_curr_compo and m_next_comp:
+                p_text_temp = p.text
+                p.text = next_p.text
+                next_p.text = p_text_temp
+                for target_p in (p, next_p):
+                    t_str = target_p.text.strip()
+                    m_lbl = re.match(r'^(Competencia|Componente)\s*:\s*(.*)$', t_str, re.IGNORECASE)
+                    if m_lbl and not _has_drawing(target_p._element):
+                        target_p.text = ""
+                        r1 = target_p.add_run(f"{m_lbl.group(1).capitalize()}: ")
+                        r1.bold = True
+                        r2 = target_p.add_run(_normalize_case(m_lbl.group(2).strip()))
+                        r2.bold = False
+                text = p.text.strip()
+
+        # Deduplication check: if repeated across consecutive questions, leave ONLY ONCE!
+        m_c = re.match(r'^Competencia\s*:\s*(.*)$', text, re.IGNORECASE)
+        m_co = re.match(r'^Componente\s*:\s*(.*)$', text, re.IGNORECASE)
+
+        if m_c:
+            val = m_c.group(1).strip().lower()
+            if val == last_comp:
+                if not _has_drawing(p._element):
+                    p._element.getparent().remove(p._element)
+            else:
+                last_comp = val
+        elif m_co:
+            val = m_co.group(1).strip().lower()
+            if val == last_compo:
+                if not _has_drawing(p._element):
+                    p._element.getparent().remove(p._element)
+            else:
+                last_compo = val
+
+        # Remove blank line spaces immediately following Competencia or Componente
+        if m_c or m_co:
+            j = i + 1
+            while j < len(all_paras):
+                np_elem = all_paras[j]._element
+                if not all_paras[j].text.strip() and not _has_drawing(np_elem):
+                    parent = np_elem.getparent()
+                    if parent is not None:
+                        parent.remove(np_elem)
+                    j += 1
+                else:
+                    break
+
+        i += 1
+
+
 # ── MAIN MERGE ───────────────────────────────────────────────
 
 def merge_docx_with_guaranteed_header(template_path, file_list, output_path, config_data, start_offset=0):
@@ -810,6 +906,7 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         _resolve_autonumbering(sd)
         cur = apply_renumbering_and_ranges(sd, cur)
         apply_formatting_to_document(sd)
+        process_competencias_and_componentes(sd)
         reset_letter_sequence(sd)
 
         # Clear headers/footers from sub-documents so they inherit the template's
