@@ -12,8 +12,6 @@ set "APP=%~dp0desktop_app.py"
 rem ── 1. RUTA RÁPIDA: Si Python y las dependencias ya están listas, iniciar de inmediato (< 1s) ──
 python -c "import PyQt6, docx, win32com" >nul 2>&1
 if not errorlevel 1 (
-    pythonw "%APP%" >nul 2>&1
-    if not errorlevel 1 exit /b 0
     python "%APP%"
     exit /b 0
 )

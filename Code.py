@@ -17,6 +17,8 @@ from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls, qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
+CM_TO_PT = 28.3465
+
 
 # ─── CONFIGURACIÓN DE GRADOS Y NIVELES ─────────────────────────
 
@@ -61,24 +63,34 @@ CM_TO_PT = 72.0 / 2.54  # 1 cm = 28.3465 pt
 def add_dynamic_page_number_to_footer(paragraph):
     font_name = "Century Gothic"
     font_size = Pt(11)
-    run_text1 = paragraph.add_run("Página ")
-    run_text1.font.name = font_name; run_text1.font.size = font_size
-    run_page = paragraph.add_run()
-    run_page.font.name = font_name; run_page.font.size = font_size; run_page.bold = True
-    fld1 = parse_xml(r'<w:fldChar %s w:fldCharType="begin"/>' % nsdecls('w'))
-    instr1 = parse_xml(r'<w:instrText %s xml:space="preserve"> PAGE </w:instrText>' % nsdecls('w'))
-    fld2 = parse_xml(r'<w:fldChar %s w:fldCharType="separate"/>' % nsdecls('w'))
-    fld3 = parse_xml(r'<w:fldChar %s w:fldCharType="end"/>' % nsdecls('w'))
-    run_page._r.extend([fld1, instr1, fld2, fld3])
-    run_text2 = paragraph.add_run(" de ")
-    run_text2.font.name = font_name; run_text2.font.size = font_size
-    run_numpages = paragraph.add_run()
-    run_numpages.font.name = font_name; run_numpages.font.size = font_size; run_numpages.bold = True
-    fld4 = parse_xml(r'<w:fldChar %s w:fldCharType="begin"/>' % nsdecls('w'))
-    instr2 = parse_xml(r'<w:instrText %s xml:space="preserve"> NUMPAGES </w:instrText>' % nsdecls('w'))
-    fld5 = parse_xml(r'<w:fldChar %s w:fldCharType="separate"/>' % nsdecls('w'))
-    fld6 = parse_xml(r'<w:fldChar %s w:fldCharType="end"/>' % nsdecls('w'))
-    run_numpages._r.extend([fld4, instr2, fld5, fld6])
+
+    def add_field(p, field_text, bold=True):
+        r_pr = f'<w:rPr><w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>'
+        if bold:
+            r_pr += '<w:b/><w:bCs/>'
+        r_pr += '<w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr>'
+
+        fld_begin = parse_xml(f'<w:r {nsdecls("w")}>{r_pr}<w:fldChar w:fldCharType="begin"/></w:r>')
+        fld_instr = parse_xml(f'<w:r {nsdecls("w")}>{r_pr}<w:instrText xml:space="preserve"> {field_text} </w:instrText></w:r>')
+        fld_sep   = parse_xml(f'<w:r {nsdecls("w")}>{r_pr}<w:fldChar w:fldCharType="separate"/></w:r>')
+        fld_end   = parse_xml(f'<w:r {nsdecls("w")}>{r_pr}<w:fldChar w:fldCharType="end"/></w:r>')
+
+        p._element.append(fld_begin)
+        p._element.append(fld_instr)
+        p._element.append(fld_sep)
+        p._element.append(fld_end)
+
+    r1 = paragraph.add_run("Página ")
+    r1.font.name = font_name
+    r1.font.size = font_size
+
+    add_field(paragraph, "PAGE", bold=True)
+
+    r2 = paragraph.add_run(" de ")
+    r2.font.name = font_name
+    r2.font.size = font_size
+
+    add_field(paragraph, "NUMPAGES", bold=True)
 
 
 def setup_footer_page_number(footer):
@@ -364,15 +376,25 @@ def _normalize_case(text):
     text = text.strip()
     if not text:
         return ""
-    if text.isupper() and len(text) > 3:
-        words = text.lower().split()
-        if words:
-            words[0] = words[0].capitalize()
-            connectors = {'y', 'e', 'o', 'u', 'de', 'del', 'la', 'las', 'los', 'el', 'en', 'con', 'por', 'para', 'a', 'al'}
-            result = [words[0]]
-            for w in words[1:]:
-                result.append(w.lower() if w.lower() in connectors else w.capitalize())
-            return " ".join(result)
+    if text.isupper() and len(text) > 2:
+        connectors = {'y', 'e', 'o', 'u', 'de', 'del', 'la', 'las', 'los', 'el', 'en', 'con', 'por', 'para', 'a', 'al', 'of', 'and', 'or', 'in', 'on', 'at', 'to', 'for', 'with'}
+        parts = re.split(r'(\s+|[/,\-])', text.lower())
+        res = []
+        is_first = True
+        for p in parts:
+            if not p:
+                continue
+            if re.match(r'^\s+|[/,\-]$', p):
+                res.append(p)
+            else:
+                if is_first:
+                    res.append(p.capitalize())
+                    is_first = False
+                elif p in connectors:
+                    res.append(p.lower())
+                else:
+                    res.append(p.capitalize())
+        return "".join(res)
     return text
 
 
@@ -381,23 +403,53 @@ def _add_styled_run(paragraph, text, bold=False, size_pt=11, font_name="Century 
     r.bold = bold
     r.font.name = font_name
     r.font.size = Pt(size_pt)
-    rPr = r._r.get_or_add_rPr()
-    rFonts = rPr.find(qn('w:rFonts'))
-    if rFonts is None:
-        rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
-        rPr.append(rFonts)
-    else:
-        rFonts.set(qn('w:ascii'), font_name)
-        rFonts.set(qn('w:hAnsi'), font_name)
-        rFonts.set(qn('w:cs'), font_name)
-    sz = rPr.find(qn('w:sz'))
-    val_sz = str(int(size_pt * 2))
-    if sz is None:
-        sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="{val_sz}"/>')
-        rPr.append(sz)
-    else:
-        sz.set(qn('w:val'), val_sz)
     return r
+
+
+def _remove_tabs_from_pPr(p):
+    """Elimina paradas de tabulación XML (<w:tabs>) y tabuladores del párrafo."""
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    pPr = p._element.get_or_add_pPr()
+    tabs = pPr.find(f'{{{wns}}}tabs')
+    if tabs is not None:
+        pPr.remove(tabs)
+    for t_elem in list(p._element.xpath('.//w:tab')):
+        parent = t_elem.getparent()
+        if parent is not None:
+            parent.remove(t_elem)
+
+
+def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="Century Gothic"):
+    text = re.sub(r'\s+', ' ', p.text.replace('\t', ' ')).strip()
+    m = re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
+    if m and not _has_drawing(p._element):
+        raw_label = m.group(1).lower()
+        if force_lang == 'en':
+            label = "Competence" if ('compet' in raw_label and 'competencia' not in raw_label) or 'competence' in raw_label else "Component"
+        elif force_lang == 'es':
+            label = "Competencia" if ('compet' in raw_label and 'competence' not in raw_label) or 'competencia' in raw_label else "Componente"
+        else:
+            if 'competence' in raw_label:
+                label = "Competence"
+            elif 'componente' in raw_label:
+                label = "Componente"
+            elif 'competencia' in raw_label:
+                label = "Competencia"
+            elif 'component' in raw_label:
+                label = "Component"
+            else:
+                label = "Componente"
+        
+        content = _normalize_case(m.group(2).strip())
+        _remove_tabs_from_pPr(p)
+        remove_indents(p)
+        set_single_line_spacing(p)
+        p.text = ""
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        _add_styled_run(p, f"{label}: ", bold=True, size_pt=11, font_name=font_name)
+        _add_styled_run(p, content, bold=False, size_pt=11, font_name=font_name)
+        return True
+    return False
 
 
 def format_paragraph(paragraph, doc_ref):
@@ -418,28 +470,16 @@ def format_paragraph(paragraph, doc_ref):
     )
 
     if is_redundant_header:
-        # Don't delete if it's Competencia/Componente or a Question!
-        if not re.match(r'^(Competencia|Componente)\s*:', text, re.IGNORECASE) and not re.match(r'^\s*\d+[\.\)]', text):
+        # Don't delete if it's Competencia/Competence/Componente/Component or a Question!
+        if not re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]?\s*', text, re.IGNORECASE) and not re.match(r'^\s*\d+[\.\)]', text):
             if _has_drawing(paragraph._element):
                 for t in paragraph._element.xpath('.//w:t'):
                     t.text = ""
             else:
                 paragraph.text = ""
             return
-    mc = re.match(r'^(Componente|Competencia)\s*:\s*(.*)$', text, re.IGNORECASE)
-    if mc:
-        label = mc.group(1).capitalize()
-        content = _normalize_case(mc.group(2).strip())
-        if _has_drawing(paragraph._element):
-            t_elems = paragraph._element.xpath('.//w:t')
-            if t_elems:
-                t_elems[0].text = f"{label}: {content}"
-                for t in t_elems[1:]:
-                    t.text = ""
-        else:
-            paragraph.text = ""
-            _add_styled_run(paragraph, f"{label}: ", bold=True)
-            _add_styled_run(paragraph, content, bold=False)
+
+    if _format_competencia_or_componente_paragraph(paragraph):
         return
     # Option letter A–E — format prefix (supports A), a), A., a., (A), A)text)
     mo = re.match(r'^(\s*[\(\[\{]?([a-eA-E])\s*[\.\)\]\}\-\:\/]\s*)(?!\d)', text)
@@ -500,16 +540,26 @@ def reset_letter_sequence(doc):
 
 
 def set_single_line_spacing(paragraph):
+    pf = paragraph.paragraph_format
+    from docx.shared import Pt as _Pt
+    from docx.oxml.ns import qn as _qn
     pPr = paragraph._element.get_or_add_pPr()
-    sp = pPr.find(qn('w:spacing'))
+    sp = pPr.find(_qn('w:spacing'))
     if sp is None:
         sp = parse_xml(f'<w:spacing {nsdecls("w")} w:line="240" w:lineRule="auto" w:before="0" w:after="0"/>')
-        pPr.append(sp)
+        # Insert spacing before w:ind or w:numPr to maintain schema order
+        ind_elem = pPr.find(_qn('w:ind'))
+        numPr_elem = pPr.find(_qn('w:numPr'))
+        ref_elem = ind_elem or numPr_elem
+        if ref_elem is not None:
+            ref_elem.addprevious(sp)
+        else:
+            pPr.append(sp)
     else:
-        sp.set(qn('w:line'), '240')
-        sp.set(qn('w:lineRule'), 'auto')
-        sp.set(qn('w:before'), '0')
-        sp.set(qn('w:after'), '0')
+        sp.set(_qn('w:line'), '240')
+        sp.set(_qn('w:lineRule'), 'auto')
+        sp.set(_qn('w:before'), '0')
+        sp.set(_qn('w:after'), '0')
 
 
 def _has_drawing(para_element):
@@ -708,41 +758,21 @@ def apply_formatting_to_document(doc):
         set_single_line_spacing(para)
         strip_leading_tabs(para)
         
-        # Ensure the paragraph mark gets the correct font size and name
-        pPr = para._element.get_or_add_pPr()
-        rPr = pPr.find(qn('w:rPr'))
-        if rPr is None:
-            rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
-            pPr.append(rPr)
-        
-        rFonts = rPr.find(qn('w:rFonts'))
-        if rFonts is None:
-            rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
-            rPr.append(rFonts)
-        else:
-            rFonts.set(qn('w:ascii'), font_name)
-            rFonts.set(qn('w:hAnsi'), font_name)
-            rFonts.set(qn('w:cs'), font_name)
-            
-        sz = rPr.find(qn('w:sz'))
-        if sz is None:
-            sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="22"/>')
-            rPr.append(sz)
-        else:
-            sz.set(qn('w:val'), '22')
-            
-        szCs = rPr.find(qn('w:szCs'))
-        if szCs is None:
-            szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="22"/>')
-            rPr.append(szCs)
-        else:
-            szCs.set(qn('w:val'), '22')
-
-        # Format all runs, including those nested in hyper-links or other fields
+        # Format all runs with Century Gothic 11pt
         for r_elem in p_elem.xpath('.//w:r'):
             run = Run(r_elem, para)
             run.font.name = font_name
             run.font.size = font_size
+
+
+def _safe_remove_para(p):
+    try:
+        p_elem = p._element
+        parent = p_elem.getparent()
+        if parent is not None:
+            parent.remove(p_elem)
+    except Exception:
+        pass
 
 
 def remove_blank_lines_between_question_parts(doc):
@@ -754,7 +784,7 @@ def remove_blank_lines_between_question_parts(doc):
         
         is_question = bool(re.match(r'^\s*\d+[\.\)]', text))
         is_option = bool(re.match(r'^\s*([a-eA-E])[\.\)]', text))
-        is_comp = bool(re.match(r'^(Competencia|Componente)\s*:', text, re.IGNORECASE))
+        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*:', text, re.IGNORECASE))
         
         # If this is a question, option, or competencia/componente, remove following blank lines (unless they contain images/drawings)
         if is_question or is_option or is_comp:
@@ -763,9 +793,7 @@ def remove_blank_lines_between_question_parts(doc):
                 np = all_paras[j]
                 if not np.text.strip():
                     if not _has_drawing(np._element):
-                        parent = np._element.getparent()
-                        if parent is not None:
-                            parent.remove(np._element)
+                        _safe_remove_para(np)
                         j += 1
                     else:
                         # Paragraph contains an image/drawing -> keep intact and stop removing!
@@ -861,64 +889,147 @@ def replace_in_all(tpl, replacements_map):
             replace_xml_text(list(h._element), replacements_map)
 
 
+def convert_competencia_tables_to_paragraphs(doc):
+    """
+    Si una tabla contiene Competencia / Competence / Componente / Component (ej: celdas o layout de tabla),
+    extrae el contenido a párrafos normales alineados a la izquierda y elimina la tabla.
+    """
+    from docx.text.paragraph import Paragraph
+    for tbl in list(doc.tables):
+        tbl_text = ""
+        for row in tbl.rows:
+            for cell in row.cells:
+                tbl_text += " " + cell.text.strip()
+        tbl_text = tbl_text.strip()
+        
+        if re.search(r'\b(Competencia|Competence|Componente|Component)\s*[:\-]', tbl_text, re.IGNORECASE):
+            tbl_elem = tbl._element
+            parent = tbl_elem.getparent()
+            if parent is not None:
+                for row in tbl.rows:
+                    row_txt = " ".join([c.text.strip() for c in row.cells if c.text.strip()])
+                    if row_txt:
+                        new_p = parse_xml(f'<w:p {nsdecls("w")}/>')
+                        tbl_elem.addprevious(new_p)
+                        p_obj = Paragraph(new_p, doc)
+                        p_obj.text = row_txt
+                        _format_competencia_or_componente_paragraph(p_obj)
+                parent.remove(tbl_elem)
+
+
+def split_inline_competencia_and_componente(doc):
+    """
+    Si en un solo párrafo vienen pegados Competencia/Competence y Componente/Component
+    (ej: 'Competence: Linguistic/sociolinguistic COMPONENT: Comprehension'),
+    se dividen en 2 párrafos separados en líneas independientes.
+    """
+    from docx.text.paragraph import Paragraph
+    for p in get_all_paragraphs(doc):
+        text = p.text.replace('\t', ' ').strip()
+        m_comp = re.search(r'\b(Competencia|Competence)\s*[:\-]?\s*(.*?)(?=\b(?:Componente|Component)\b|$)', text, re.IGNORECASE)
+        m_compo = re.search(r'\b(Componente|Component)\s*[:\-]?\s*(.*?)$', text, re.IGNORECASE)
+        
+        # Si el párrafo contiene AMBOS marcadores a la vez
+        if m_comp and m_compo and m_comp.start() < m_compo.start():
+            comp_label = m_comp.group(1)
+            comp_val = m_comp.group(2).strip()
+            
+            compo_label = m_compo.group(1)
+            compo_val = m_compo.group(2).strip()
+            
+            p_elem = p._element
+            parent = p_elem.getparent()
+            if parent is not None:
+                p1_xml = parse_xml(f'<w:p {nsdecls("w")}/>')
+                p2_xml = parse_xml(f'<w:p {nsdecls("w")}/>')
+                
+                p_elem.addprevious(p1_xml)
+                p_elem.addprevious(p2_xml)
+                
+                p1_obj = Paragraph(p1_xml, doc)
+                p2_obj = Paragraph(p2_xml, doc)
+                
+                p1_obj.text = f"{comp_label}: {comp_val}"
+                p2_obj.text = f"{compo_label}: {compo_val}"
+                _format_competencia_or_componente_paragraph(p1_obj)
+                _format_competencia_or_componente_paragraph(p2_obj)
+                
+                parent.remove(p_elem)
+
+
 def process_competencias_and_componentes(doc):
     font_name = "Century Gothic"
+
+    # Step 0: Extraer Competencia/Componente atrapados en tablas a párrafos normales libres
+    convert_competencia_tables_to_paragraphs(doc)
+
+    # Step 0.5: Dividir si vienen pegados en la misma línea
+    split_inline_competencia_and_componente(doc)
+
     all_paras = get_all_paragraphs(doc)
 
-    # Step 1: Normalize all Competencia / Componente paragraphs with Century Gothic 11pt
+    # Step 1: Normalize all Competencia / Competence / Componente / Component paragraphs
     for p in all_paras:
-        t_str = p.text.strip()
-        m_lbl = re.match(r'^(Competencia|Componente)\s*:\s*(.*)$', t_str, re.IGNORECASE)
-        if m_lbl and not _has_drawing(p._element):
-            lbl_type = m_lbl.group(1).capitalize()
-            val_text = _normalize_case(m_lbl.group(2).strip())
-            p.text = ""
-            _add_styled_run(p, f"{lbl_type}: ", bold=True, size_pt=11, font_name=font_name)
-            _add_styled_run(p, val_text, bold=False, size_pt=11, font_name=font_name)
+        _format_competencia_or_componente_paragraph(p, font_name=font_name)
 
-    # Step 2: Ensure order (Competencia first, Componente second)
+    # Step 2: Ensure order (Competencia/Competence first, Componente/Component second) and Language consistency
     all_paras = get_all_paragraphs(doc)
     i = 0
     while i < len(all_paras) - 1:
         p1 = all_paras[i]
         p2 = all_paras[i + 1]
-        t1 = p1.text.strip()
-        t2 = p2.text.strip()
+        t1 = p1.text.replace('\t', ' ').strip()
+        t2 = p2.text.replace('\t', ' ').strip()
         
-        m_compo = re.match(r'^Componente\s*:\s*(.*)$', t1, re.IGNORECASE)
-        m_comp = re.match(r'^Competencia\s*:\s*(.*)$', t2, re.IGNORECASE)
+        m1 = re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]?\s*(.*)$', t1, re.IGNORECASE)
+        m2 = re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]?\s*(.*)$', t2, re.IGNORECASE)
         
-        if m_compo and m_comp:
-            # Swap paragraphs so Competencia is first!
-            p1_text = p1.text
-            p1.text = p2.text
-            p2.text = p1_text
-            for target_p in (p1, p2):
-                t_str = target_p.text.strip()
-                m = re.match(r'^(Competencia|Componente)\s*:\s*(.*)$', t_str, re.IGNORECASE)
-                if m and not _has_drawing(target_p._element):
-                    target_p.text = ""
-                    _add_styled_run(target_p, f"{m.group(1).capitalize()}: ", bold=True, size_pt=11, font_name=font_name)
-                    _add_styled_run(target_p, m.group(2).strip(), bold=False, size_pt=11, font_name=font_name)
+        if m1 and m2:
+            l1 = m1.group(1).lower()
+            l2 = m2.group(1).lower()
+            
+            # Detect language of the pair: if any is explicitly Spanish ('competencia'/'componente'), enforce Spanish.
+            # If both are English ('competence'/'component'), enforce English.
+            if 'competencia' in l1 or 'componente' in l1 or 'competencia' in l2 or 'componente' in l2:
+                pair_lang = 'es'
+            elif 'competence' in l1 or 'component' in l1 or 'competence' in l2 or 'component' in l2:
+                pair_lang = 'en'
+            else:
+                pair_lang = 'es'
+                
+            is_comp1 = ('componente' in l1 or 'component' in l1)
+            is_comp2 = ('competencia' in l2 or 'competence' in l2)
+            
+            if is_comp1 and is_comp2:
+                # Swap paragraphs so Competencia/Competence comes first
+                p1_text = p1.text
+                p1.text = p2.text
+                p2.text = p1_text
+                
+            _format_competencia_or_componente_paragraph(p1, force_lang=pair_lang, font_name=font_name)
+            _format_competencia_or_componente_paragraph(p2, force_lang=pair_lang, font_name=font_name)
+        elif m1:
+            l1 = m1.group(1).lower()
+            single_lang = 'en' if ('competence' in l1 or l1 == 'component') else 'es'
+            _format_competencia_or_componente_paragraph(p1, force_lang=single_lang, font_name=font_name)
+            
         i += 1
 
-    # Step 3: Remove blank lines directly under Competencia or Componente
+    # Step 3: Remove blank lines directly under Competencia/Competence or Componente/Component
     all_paras = get_all_paragraphs(doc)
     for i, p in enumerate(all_paras):
         t_str = p.text.strip()
-        if re.match(r'^(Competencia|Componente)\s*:', t_str, re.IGNORECASE):
+        if re.match(r'^(Competencia|Competence|Componente|Component)\s*:', t_str, re.IGNORECASE):
             j = i + 1
             while j < len(all_paras):
                 np = all_paras[j]
                 if not np.text.strip() and not _has_drawing(np._element):
-                    parent = np._element.getparent()
-                    if parent is not None:
-                        parent.remove(np._element)
+                    _safe_remove_para(np)
                     j += 1
                 else:
                     break
 
-    # Step 4: Block-level Deduplication (Only remove if the PAIR Competencia & Componente is identical across consecutive questions)
+    # Step 4: Block-level Deduplication (Only remove if the PAIR is identical across consecutive questions)
     all_paras = get_all_paragraphs(doc)
     last_pair = (None, None)
     
@@ -927,29 +1038,135 @@ def process_competencias_and_componentes(doc):
         p = all_paras[i]
         t_str = p.text.strip()
         
-        m_comp = re.match(r'^Competencia\s*:\s*(.*)$', t_str, re.IGNORECASE)
+        m_comp = re.match(r'^(Competencia|Competence)\s*:\s*(.*)$', t_str, re.IGNORECASE)
         if m_comp:
-            comp_val = m_comp.group(1).strip().lower()
+            comp_val = m_comp.group(2).strip().lower()
             compo_val = None
             compo_p = None
             
             if i + 1 < len(all_paras):
-                m_co = re.match(r'^Componente\s*:\s*(.*)$', all_paras[i + 1].text.strip(), re.IGNORECASE)
+                m_co = re.match(r'^(Componente|Component)\s*:\s*(.*)$', all_paras[i + 1].text.strip(), re.IGNORECASE)
                 if m_co:
-                    compo_val = m_co.group(1).strip().lower()
+                    compo_val = m_co.group(2).strip().lower()
                     compo_p = all_paras[i + 1]
-            
+        
             current_pair = (comp_val, compo_val)
             if current_pair == last_pair and comp_val is not None:
                 # Remove duplicate pair!
                 if not _has_drawing(p._element):
-                    p._element.getparent().remove(p._element)
+                    _safe_remove_para(p)
                 if compo_p is not None and not _has_drawing(compo_p._element):
-                    compo_p._element.getparent().remove(compo_p._element)
+                    _safe_remove_para(compo_p)
             else:
                 last_pair = current_pair
 
         i += 1
+
+
+def ensure_proper_spacing_between_questions(doc):
+    """
+    1. Elimina líneas vacías superfluas entre PART X, Competencia/Componente y la pregunta.
+    2. Garantiza exactamente 1 línea en blanco al terminar las opciones de una pregunta 
+       antes de iniciar el siguiente bloque (PART X, Competencia o nueva Pregunta).
+    """
+    # 1. Eliminar líneas en blanco consecutivas (más de 1 en blanco seguidas)
+    all_paras = get_all_paragraphs(doc)
+    i = 0
+    while i < len(all_paras) - 1:
+        p1 = all_paras[i]
+        p2 = all_paras[i + 1]
+        if not p1.text.strip() and not _has_drawing(p1._element) and not p2.text.strip() and not _has_drawing(p2._element):
+            _safe_remove_para(p1)
+            all_paras = get_all_paragraphs(doc)
+        else:
+            i += 1
+
+    # 2. Eliminar cualquier línea en blanco entre PART X, Competencia, Componente y el enunciado de la pregunta
+    all_paras = get_all_paragraphs(doc)
+    i = 0
+    while i < len(all_paras) - 1:
+        p = all_paras[i]
+        t_str = p.text.strip()
+        is_header_elem = (
+            bool(re.match(r'^(PART|PARTE)\s+\d+[\s\:\-]', t_str, re.IGNORECASE)) or
+            bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*:', t_str, re.IGNORECASE))
+        )
+        if is_header_elem:
+            np = all_paras[i + 1]
+            if not np.text.strip() and not _has_drawing(np._element):
+                _safe_remove_para(np)
+                all_paras = get_all_paragraphs(doc)
+                continue
+        i += 1
+
+    # 3. Garantizar exactamente 1 línea en blanco al terminar una pregunta/opciones antes del nuevo bloque
+    all_paras = get_all_paragraphs(doc)
+    i = 0
+    while i < len(all_paras):
+        p = all_paras[i]
+        text = p.text.strip()
+        
+        is_part_header = bool(re.match(r'^(PART|PARTE)\s+\d+[\s\:\-]', text, re.IGNORECASE))
+        is_comp_header = bool(re.match(r'^(Competencia|Competence)\s*:', text, re.IGNORECASE))
+        is_question_num = bool(re.match(r'^\s*\d+[\.\)]', text))
+        
+        prev_text = all_paras[i - 1].text.strip() if i > 0 else ""
+        prev_is_comp_or_part = (
+            bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*:', prev_text, re.IGNORECASE)) or
+            bool(re.match(r'^(PART|PARTE)\s+\d+[\s\:\-]', prev_text, re.IGNORECASE))
+        )
+        
+        is_start_of_block = is_part_header or is_comp_header or (is_question_num and not prev_is_comp_or_part)
+        
+        if is_start_of_block and i > 0:
+            if prev_text and not prev_is_comp_or_part:
+                p._element.addprevious(parse_xml(f'<w:p {nsdecls("w")}/>'))
+                all_paras = get_all_paragraphs(doc)
+                i += 1
+        i += 1
+
+
+def _merge_docx_with_rels(master_doc, sub_doc, add_break=False):
+    rel_map = {}
+    for rel_id, rel in sub_doc.part.rels.items():
+        if "image" in rel.target_ref or "hyperlink" in rel.target_ref:
+            try:
+                new_rel_id = master_doc.part.relate_to(rel.target_part, rel.reltype)
+                rel_map[rel_id] = new_rel_id
+            except Exception:
+                pass
+
+    for element in sub_doc.element.body:
+        if element.tag.endswith('sectPr'):
+            continue
+        new_elem = copy.deepcopy(element)
+        if rel_map:
+            for r_elem in new_elem.xpath('.//*[@r:embed]'):
+                old_embed = r_elem.get(qn('r:embed'))
+                if old_embed in rel_map:
+                    r_elem.set(qn('r:embed'), rel_map[old_embed])
+        master_doc.element.body.append(new_elem)
+
+    if add_break:
+        master_doc.add_page_break()
+
+
+def strip_section_breaks(doc):
+    """Remove ALL inline sectPr elements (section breaks inside paragraph pPr).
+    This merges all sections into one so content flows continuously without
+    forced page or section breaks from the source documents."""
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    body = doc.element.body
+    for p_elem in list(body):
+        # Only process paragraph elements
+        if not p_elem.tag.endswith('}p') and p_elem.tag != 'p':
+            continue
+        pPr = p_elem.find(f'{{{wns}}}pPr')
+        if pPr is None:
+            continue
+        sectPr = pPr.find(f'{{{wns}}}sectPr')
+        if sectPr is not None:
+            pPr.remove(sectPr)
 
 
 # ── MAIN MERGE ───────────────────────────────────────────────
@@ -966,12 +1183,19 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         "(P_C)": str(p_c_val),
     }
 
+    num_files = len([f for f in file_list if os.path.exists(f)])
+    eval_prefix = "Evaluación" if num_files <= 1 else "Evaluaciones"
+
     title_context = {k: config_data.get(k, '') for k in ['grade_clean', 'period', 'session_code', 'year', 'level']}
     title_context['grade'] = config_data.get('grade', title_context['grade_clean'])
     title_context['session'] = title_context['session_code']
+
     title_template = config_data.get('title_template', '')
     if not title_template:
-        title_template = "Evaluación de Suficiencia Académica - {grade_clean} - {period} - {session_code} - {year}"
+        title_template = f"{eval_prefix} de Suficiencia Académica - {{grade_clean}} - {{period}} - {{session_code}} - {{year}}"
+    else:
+        if title_template.startswith("Evaluación de") or title_template.startswith("Evaluaciones de"):
+            title_template = re.sub(r'^Evaluaci\u00f3n(es)?\s+de', f'{eval_prefix} de', title_template)
 
     # ── Pre-process each sub-doc ───────────────────────────────
     cur = start_offset + 1
@@ -985,7 +1209,7 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         cur = apply_renumbering_and_ranges(sd, cur)
         apply_formatting_to_document(sd)
         process_competencias_and_componentes(sd)
-        remove_blank_lines_between_question_parts(sd)
+        ensure_proper_spacing_between_questions(sd)
         reset_letter_sequence(sd)
 
         # Clear headers/footers from sub-documents so they inherit the template's
@@ -1006,13 +1230,12 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         tp = os.path.join(tmp_dir, os.path.basename(fp) + '.tmp.docx')
         sd.save(tp)
         temp_subs.append(tp)
+
     if not temp_subs:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise RuntimeError('No hay sub-documentos para procesar.')
 
     # ── Pre-process template: replace placeholders everywhere ──
-    # The user has already placed the header content as normal body
-    # content in the template.  Just replace tokens and merge.
     tpl = Document(template_path)
     replace_in_all(tpl, replacements_map)
     for sec in tpl.sections:
@@ -1020,7 +1243,10 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
     prepped = os.path.join(tmp_dir, 'template_prepped.docx')
     tpl.save(prepped)
 
-    # ── Word COM: insert sub-documents at end ─────────────────
+    merged_path = os.path.join(tmp_dir, 'word_merged.docx')
+    com_success = False
+
+    # ── Attempt 1: Word COM ────────────────────────────────────
     word = None
     doc = None
     try:
@@ -1095,74 +1321,69 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
             except:
                 pass
 
-        # --- Save ---
-        merged = output_path + '.word_merged.docx'
-        doc.SaveAs2(os.path.abspath(merged), AddToRecentFiles=False)
+        doc.SaveAs2(os.path.abspath(merged_path), AddToRecentFiles=False)
         doc.Close(False); doc = None
         word.Quit(); word = None
-
-        # ── Post-process (python-docx) ──────────────────────
-        final = Document(merged)
-        grade_clean = config_data.get('grade_clean', '')
-        period = config_data.get('period', '')
-        session_code_val = config_data.get('session_code', '')
-        title_context = {
-            'grade_clean': grade_clean,
-            'period': period,
-            'session_code': session_code_val,
-            'year': config_data.get('year', ''),
-            'level': config_data.get('level', ''),
-        }
-        title_context['grade'] = title_context['grade_clean']
-        title_context['session'] = title_context['session_code']
-        expanded_title = expand_template(title_template, title_context)
-        final.core_properties.title = expanded_title
-        final.core_properties.category = "Evaluación de Suficiencia Académica"
-        final.core_properties.content_status = period
-
-        for i, sec in enumerate(final.sections):
-            # Enforce single column
-            force_single_column(sec)
-            # Strip all header references from every section (defensive)
-            sectPr = sec._sectPr
-            for ref in list(sectPr.findall(qn('w:headerReference'))):
-                sectPr.remove(ref)
-            titlePg = sectPr.find(qn('w:titlePg'))
-            if titlePg is not None:
-                sectPr.remove(titlePg)
-            # Compact margins
-            apply_subsequent_page_setup(sec)
-            # Footer page number
-            sec.footer.is_linked_to_previous = False
-            setup_footer_page_number(sec.footer)
-
-        # Apply native numbering to the fully merged document
-        apply_native_lists_to_final_doc(final, start_offset=start_offset)
-
-        if os.path.exists(output_path):
-            for _ in range(5):
-                try:
-                    os.remove(output_path)
-                    break
-                except:
-                    time.sleep(0.5)
-        final.save(output_path)
-        del final
-        import gc; gc.collect()
-        for _ in range(5):
-            try:
-                os.remove(merged)
-                break
-            except:
-                time.sleep(0.5)
+        com_success = True
     except Exception:
-        raise
-    finally:
         if doc is not None:
             try: doc.Close(False)
             except: pass
         if word is not None:
             try: word.Quit()
             except: pass
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        doc = None
+        word = None
+        com_success = False
+
+    # ── Fallback: python-docx merge if COM unavailable ─────────
+    if not com_success or not os.path.exists(merged_path):
+        final_doc = Document(prepped)
+        for i, tp in enumerate(temp_subs):
+            sub_doc = Document(tp)
+            _merge_docx_with_rels(final_doc, sub_doc, add_break=(i < len(temp_subs) - 1))
+        final_doc.save(merged_path)
+
+    # ── Post-process (python-docx) ──────────────────────────────
+    final = Document(merged_path)
+    expanded_title = expand_template(title_template, title_context)
+    final.core_properties.title = expanded_title
+    final.core_properties.category = f"{eval_prefix} de Suficiencia Académica"
+    final.core_properties.content_status = config_data.get('period', '')
+
+    for sec in final.sections:
+        # Enforce single column
+        force_single_column(sec)
+        # Strip all header references from every section (defensive)
+        sectPr = sec._sectPr
+        for ref in list(sectPr.findall(qn('w:headerReference'))):
+            sectPr.remove(ref)
+        titlePg = sectPr.find(qn('w:titlePg'))
+        if titlePg is not None:
+            sectPr.remove(titlePg)
+        # Compact margins
+        apply_subsequent_page_setup(sec)
+        # Footer page number
+        sec.footer.is_linked_to_previous = False
+        setup_footer_page_number(sec.footer)
+
+    # Apply native numbering to the fully merged document
+    apply_native_lists_to_final_doc(final, start_offset=start_offset)
+
+    if os.path.exists(output_path):
+        for _ in range(5):
+            try:
+                os.remove(output_path)
+                break
+            except Exception:
+                time.sleep(0.3)
+
+    try:
+        final.save(output_path)
+    except PermissionError:
+        raise PermissionError(f"El archivo '{os.path.basename(output_path)}' est\u00e1 abierto en Microsoft Word. Por favor ci\u00e9rralo e intenta de nuevo.")
+    except Exception as err:
+        raise RuntimeError(f"No se pudo guardar '{os.path.basename(output_path)}': {err}")
+
+    shutil.rmtree(tmp_dir, ignore_errors=True)
     return cur - 1

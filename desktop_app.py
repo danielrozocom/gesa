@@ -6,14 +6,31 @@ import re
 import ctypes
 import copy
 import subprocess
+import tempfile
+
+_instance_file_lock = None
+
+def is_another_instance_running():
+    global _instance_file_lock
+    lock_file = os.path.join(tempfile.gettempdir(), "gesa_app_v520d.lock")
+    try:
+        _instance_file_lock = open(lock_file, "a+")
+        if sys.platform == "win32":
+            import msvcrt
+            _instance_file_lock.seek(0)
+            msvcrt.locking(_instance_file_lock.fileno(), msvcrt.LK_NBLCK, 1)
+        return False
+    except (IOError, OSError):
+        return True
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QListWidget,
     QListWidgetItem, QTextEdit, QProgressBar, QFrame, QSplitter,
     QFileDialog, QMessageBox, QAbstractItemView,
     QListView, QDialog, QDialogButtonBox, QCalendarWidget, QSizePolicy, QToolButton,
+    QSplashScreen,
 )
-from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QLocale, QSettings
+from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QLocale, QSettings, QRectF
 from PyQt6.QtGui import QTextCharFormat, QColor, QPalette, QShortcut, QKeySequence, QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -1237,7 +1254,23 @@ class DesktopApp(QMainWindow):
         if not fn.lower().endswith(".docx"):
             fn += ".docx"
 
-        dt = expand_template(self.title_template, ctx)
+        total_files = 0
+        if target_sub_name and hasattr(self, 'sessions') and self.sessions:
+            for sess_obj in self.sessions:
+                subs_list = sess_obj.get("subsessions", []) if isinstance(sess_obj, dict) else getattr(sess_obj, "subsessions", [])
+                for sub_obj in subs_list:
+                    sub_name_val = sub_obj.get("name", "") if isinstance(sub_obj, dict) else getattr(sub_obj, "name", "")
+                    sub_files_val = sub_obj.get("files", []) if isinstance(sub_obj, dict) else getattr(sub_obj, "files", [])
+                    if sub_name_val == target_sub_name or sub_name_val.replace("Subsesión ", "S").replace("Subsesion ", "S") == sub_code:
+                        total_files = len(sub_files_val)
+                        break
+
+        eval_prefix = "Evaluación" if total_files <= 1 else "Evaluaciones"
+        tpl_title = self.title_template
+        if tpl_title.startswith("Evaluación de") or tpl_title.startswith("Evaluaciones de"):
+            tpl_title = re.sub(r'^Evaluaci\u00f3n(es)?\s+de', f'{eval_prefix} de', tpl_title)
+
+        dt = expand_template(tpl_title, ctx)
 
         self.preview_box.setText(
             f"<b>\ud83d\udcc4 Archivo:</b> {fn}<br>"
@@ -1564,9 +1597,13 @@ class DesktopApp(QMainWindow):
         dlg = QMessageBox(self)
         dlg.setWindowTitle(title)
         dlg.setText(message)
-        dlg.setIcon(QMessageBox.Icon.Information)
-        btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
         c = self._theme_colors()
+        try:
+            ico = qta.icon("fa5s.check-circle", color=c["green"])
+            dlg.setIconPixmap(ico.pixmap(48, 48))
+        except Exception:
+            dlg.setIcon(QMessageBox.Icon.Information)
+        btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
         set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
         dlg.setStyleSheet(f"QMessageBox {{ background-color: {c['card']}; color: {c['text']}; }} QMessageBox QLabel {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}")
         btn.setStyleSheet(f"QPushButton {{ background-color: {c['blue']}; color: #ffffff; border: none; border-radius: 6px; padding: 7px 22px; font-weight: 600; min-width: 75px; }} QPushButton:hover {{ background-color: {c['blue_hover']}; }}")
@@ -1577,9 +1614,13 @@ class DesktopApp(QMainWindow):
         dlg = QMessageBox(self)
         dlg.setWindowTitle(title)
         dlg.setText(message)
-        dlg.setIcon(QMessageBox.Icon.Warning)
-        btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
         c = self._theme_colors()
+        try:
+            ico = qta.icon("fa5s.exclamation-triangle", color="#f59e0b" if self._effective_theme() == "dark" else "#d97706")
+            dlg.setIconPixmap(ico.pixmap(48, 48))
+        except Exception:
+            dlg.setIcon(QMessageBox.Icon.Warning)
+        btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
         set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
         dlg.setStyleSheet(f"QMessageBox {{ background-color: {c['card']}; color: {c['text']}; }} QMessageBox QLabel {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}")
         btn.setStyleSheet(f"QPushButton {{ background-color: {c['blue']}; color: #ffffff; border: none; border-radius: 6px; padding: 7px 22px; font-weight: 600; min-width: 75px; }} QPushButton:hover {{ background-color: {c['blue_hover']}; }}")
@@ -1590,20 +1631,34 @@ class DesktopApp(QMainWindow):
         dlg = QMessageBox(self)
         dlg.setWindowTitle(title)
         dlg.setText(message)
-        dlg.setIcon(QMessageBox.Icon.Critical)
-        btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
+        dlg.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         c = self._theme_colors()
+        try:
+            ico = qta.icon("fa5s.times-circle", color=c["red"])
+            dlg.setIconPixmap(ico.pixmap(48, 48))
+        except Exception:
+            dlg.setIcon(QMessageBox.Icon.Critical)
+        btn_copy = dlg.addButton("Copiar Error", QMessageBox.ButtonRole.ActionRole)
+        btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
         set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
         dlg.setStyleSheet(f"QMessageBox {{ background-color: {c['card']}; color: {c['text']}; }} QMessageBox QLabel {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}")
         btn.setStyleSheet(f"QPushButton {{ background-color: {c['red']}; color: #ffffff; border: none; border-radius: 6px; padding: 7px 22px; font-weight: 600; min-width: 75px; }} QPushButton:hover {{ background-color: {c['red_hover']}; }}")
+        btn_copy.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {c['text']}; border: 1px solid {c['border']}; border-radius: 6px; padding: 7px 18px; font-weight: 500; }} QPushButton:hover {{ background-color: {c['bg']}; }}")
         dlg.setDefaultButton(btn)
         dlg.exec()
+        if dlg.clickedButton() == btn_copy:
+            QApplication.clipboard().setText(message)
 
     def _ask_yes_no(self, title, message):
         dlg = QMessageBox(self)
         dlg.setWindowTitle(title)
         dlg.setText(message)
-        dlg.setIcon(QMessageBox.Icon.Question)
+        c = self._theme_colors()
+        try:
+            ico = qta.icon("fa5s.question-circle", color=c["blue"])
+            dlg.setIconPixmap(ico.pixmap(48, 48))
+        except Exception:
+            dlg.setIcon(QMessageBox.Icon.Question)
         yes_btn = dlg.addButton("  S\u00ed  ", QMessageBox.ButtonRole.YesRole)
         no_btn = dlg.addButton("  No  ", QMessageBox.ButtonRole.NoRole)
         
@@ -2251,7 +2306,7 @@ class DesktopApp(QMainWindow):
 
         self.name_template = cfg.get("name_template", "E.S.A._{grade}_{period}_{session}_{year}")
         self.name_template_entry.setText(self.name_template)
-        self.title_template = cfg.get("title_template", "Evaluaci\u00f3n de Suficiencia Acad\u00e9mica - {grade} - {period} - {session} - {year}")
+        self.title_template = cfg.get("title_template", "Evaluaciones de Suficiencia Académica - {grade} - {period} - {session} - {year}")
         self.title_template_entry.setText(self.title_template)
 
         raw = cfg.get("sessions")
@@ -2582,6 +2637,118 @@ class DesktopApp(QMainWindow):
         event.accept()
 
 
+def get_effective_theme_is_dark():
+    try:
+        settings = QSettings("GESA", "AcademicManager")
+        t = str(settings.value("theme", "system"))
+        if t == "dark":
+            return True
+        elif t == "light":
+            return False
+        else:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return val == 0
+    except Exception:
+        return True
+
+
+def global_excepthook(exctype, value, traceback_obj):
+    import traceback
+    tb_str = "".join(traceback.format_exception(exctype, value, traceback_obj))
+    sys.stderr.write(tb_str)
+    try:
+        full_msg = f"Ocurrió un error no controlado:\n\n{value}\n\nDetalles técnicos:\n{tb_str}"
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle("Error de Ejecución — GESA")
+        msg_box.setText(full_msg)
+        msg_box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        try:
+            ico = qta.icon("fa5s.times-circle", color="#cf222e")
+            msg_box.setIconPixmap(ico.pixmap(48, 48))
+        except Exception:
+            msg_box.setIcon(QMessageBox.Icon.Critical)
+        btn_copy = msg_box.addButton("Copiar Error", QMessageBox.ButtonRole.ActionRole)
+        btn_ok = msg_box.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
+        msg_box.exec()
+        if msg_box.clickedButton() == btn_copy:
+            QApplication.clipboard().setText(full_msg)
+    except Exception:
+        pass
+
+sys.excepthook = global_excepthook
+
+
+class GesaSplashScreen(QSplashScreen):
+    def __init__(self, icon_path=None):
+        is_dark = get_effective_theme_is_dark()
+        
+        bg_color = QColor("#161b22") if is_dark else QColor("#ffffff")
+        border_color = QColor("#30363d") if is_dark else QColor("#d0d7de")
+        title_color = QColor("#58a6ff") if is_dark else QColor("#0969da")
+        subtitle_color = QColor("#8b949e") if is_dark else QColor("#57606a")
+        loading_color = QColor("#c9d1d9") if is_dark else QColor("#24292f")
+        bar_color = QColor("#238636") if is_dark else QColor("#2da44e")
+        badge_bg = QColor("#1f6beb") if is_dark else QColor("#0969da")
+
+        pix = QPixmap(520, 260)
+        pix.fill(QColor(0, 0, 0, 0))
+        super().__init__(pix, Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        # Draw rounded background card
+        painter.setPen(border_color)
+        painter.setBrush(bg_color)
+        painter.drawRoundedRect(2, 2, 516, 256, 16, 16)
+
+        # Draw Icon (prefer SVG for crisp vector rendering)
+        svg_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "book-check.svg")
+        if os.path.exists(svg_file):
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(badge_bg)
+            painter.drawRoundedRect(30, 36, 60, 60, 14, 14)
+            
+            renderer = QSvgRenderer(svg_file)
+            renderer.render(painter, QRectF(42, 48, 36, 36))
+        elif icon_path and os.path.exists(icon_path):
+            ico_pix = QPixmap(icon_path).scaled(64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            painter.drawPixmap(30, 36, ico_pix)
+
+        # Title GESA
+        painter.setPen(title_color)
+        font = painter.font()
+        font.setFamily("Century Gothic")
+        font.setPointSize(24)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(106, 70, "GESA")
+
+        # Subtitle
+        painter.setPen(subtitle_color)
+        font.setPointSize(11)
+        font.setBold(False)
+        painter.setFont(font)
+        painter.drawText(106, 95, "Gestor de Evaluaciones de Suficiencia Académica")
+
+        # Loading text
+        painter.setPen(loading_color)
+        font.setPointSize(10)
+        painter.setFont(font)
+        painter.drawText(30, 195, "⚡ Cargando interfaz y componentes...")
+
+        # Accent Bar
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(bar_color)
+        painter.drawRoundedRect(30, 215, 460, 4, 2, 2)
+
+        painter.end()
+        self.setPixmap(pix)
+
+
 if __name__ == "__main__":
     try:
         myappid = "danielrozocom.gesa.academic.v1"
@@ -2601,6 +2768,36 @@ if __name__ == "__main__":
         app.setWindowIcon(QIcon(icon_file))
 
     app.setStyle("Fusion")
-    window = DesktopApp()
-    window.show()
+
+    # ── Instant Splash Screen & Window Load ───────────────────
+    splash = None
+    try:
+        splash = GesaSplashScreen(icon_file)
+        splash.show()
+        app.processEvents()
+
+        window = DesktopApp()
+        window.show()
+        splash.finish(window)
+    except Exception as err:
+        import traceback
+        tb = traceback.format_exc()
+        try:
+            if splash:
+                splash.hide()
+        except Exception:
+            pass
+        full_err_text = f"Ocurrió un error inesperado al iniciar la aplicación:\n\n{err}\n\nDetalles técnicos:\n{tb}"
+        msg_box = QMessageBox()
+        msg_box.setWindowTitle("Error de inicio en GESA")
+        msg_box.setText(full_err_text)
+        msg_box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        msg_box.setIcon(QMessageBox.Icon.Critical)
+        btn_copy = msg_box.addButton("Copiar Error", QMessageBox.ButtonRole.ActionRole)
+        btn_ok = msg_box.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
+        msg_box.exec()
+        if msg_box.clickedButton() == btn_copy:
+            QApplication.clipboard().setText(full_err_text)
+        sys.exit(1)
+
     sys.exit(app.exec())
