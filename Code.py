@@ -745,6 +745,37 @@ def apply_formatting_to_document(doc):
             run.font.size = font_size
 
 
+def remove_blank_lines_between_question_parts(doc):
+    all_paras = get_all_paragraphs(doc)
+    i = 0
+    while i < len(all_paras):
+        p = all_paras[i]
+        text = p.text.strip()
+        
+        is_question = bool(re.match(r'^\s*\d+[\.\)]', text))
+        is_option = bool(re.match(r'^\s*([a-eA-E])[\.\)]', text))
+        is_comp = bool(re.match(r'^(Competencia|Componente)\s*:', text, re.IGNORECASE))
+        
+        # If this is a question, option, or competencia/componente, remove following blank lines (unless they contain images/drawings)
+        if is_question or is_option or is_comp:
+            j = i + 1
+            while j < len(all_paras):
+                np = all_paras[j]
+                if not np.text.strip():
+                    if not _has_drawing(np._element):
+                        parent = np._element.getparent()
+                        if parent is not None:
+                            parent.remove(np._element)
+                        j += 1
+                    else:
+                        # Paragraph contains an image/drawing -> keep intact and stop removing!
+                        break
+                else:
+                    # Non-empty paragraph reached
+                    break
+        i += 1
+
+
 def replace_xml_text(elements_list, replacements):
     wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
     dns = 'http://schemas.openxmlformats.org/drawingml/2006/main'
@@ -954,6 +985,7 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         cur = apply_renumbering_and_ranges(sd, cur)
         apply_formatting_to_document(sd)
         process_competencias_and_componentes(sd)
+        remove_blank_lines_between_question_parts(sd)
         reset_letter_sequence(sd)
 
         # Clear headers/footers from sub-documents so they inherit the template's
