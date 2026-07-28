@@ -1,14 +1,18 @@
 $WshShell = New-Object -ComObject WScript.Shell
-$ExePath = [System.IO.Path]::Combine($PSScriptRoot, 'GESA.exe')
+$ExePath = [System.IO.Path]::Combine($PSScriptRoot, 'dist', 'GESA', 'GESA.exe')
+if (-not (Test-Path $ExePath)) {
+    $ExePath = [System.IO.Path]::Combine($PSScriptRoot, 'GESA.exe')
+}
 $IconPath = [System.IO.Path]::Combine($PSScriptRoot, 'app_icon.ico')
 
 $TargetPath = if (Test-Path $ExePath) { $ExePath } else { [System.IO.Path]::Combine($PSScriptRoot, 'start.bat') }
+$WorkDir = [System.IO.Path]::GetDirectoryName($TargetPath)
 
 # Start Menu Shortcut (Searchable in Windows Start)
 $StartMenuPath = [System.IO.Path]::Combine($env:APPDATA, 'Microsoft\Windows\Start Menu\Programs\GESA.lnk')
 $Shortcut = $WshShell.CreateShortcut($StartMenuPath)
 $Shortcut.TargetPath = $TargetPath
-$Shortcut.WorkingDirectory = "$PSScriptRoot"
+$Shortcut.WorkingDirectory = $WorkDir
 $Shortcut.Description = "Gestor de Evaluaciones de Suficiencia Académica"
 if (Test-Path $IconPath) {
     $Shortcut.IconLocation = "$IconPath,0"
@@ -19,7 +23,7 @@ $Shortcut.Save()
 $DesktopPath = [System.IO.Path]::Combine($env:USERPROFILE, 'Desktop\GESA.lnk')
 $ShortcutDesktop = $WshShell.CreateShortcut($DesktopPath)
 $ShortcutDesktop.TargetPath = $TargetPath
-$ShortcutDesktop.WorkingDirectory = "$PSScriptRoot"
+$ShortcutDesktop.WorkingDirectory = $WorkDir
 $ShortcutDesktop.Description = "Gestor de Evaluaciones de Suficiencia Académica"
 if (Test-Path $IconPath) {
     $ShortcutDesktop.IconLocation = "$IconPath,0"

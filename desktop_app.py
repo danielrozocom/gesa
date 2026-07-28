@@ -8,6 +8,16 @@ import copy
 import subprocess
 import tempfile
 
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller _MEIPASS."""
+    if hasattr(sys, '_MEIPASS'):
+        p = os.path.join(sys._MEIPASS, relative_path)
+        if os.path.exists(p):
+            return p
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_dir, relative_path)
+
+
 _instance_file_lock = None
 
 def is_another_instance_running():
@@ -997,9 +1007,9 @@ class DesktopApp(QMainWindow):
         self.setWindowTitle("GESA \u2014 Gestor de Evaluaciones de Suficiencia Acad\u00e9mica")
         self.setMinimumSize(1100, 720)
 
-        icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+        icon_file = get_resource_path("app_icon.ico")
         if not os.path.exists(icon_file):
-            icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.png")
+            icon_file = get_resource_path("app_icon.png")
         if os.path.exists(icon_file):
             self.setWindowIcon(QIcon(icon_file))
 
@@ -1017,7 +1027,7 @@ class DesktopApp(QMainWindow):
         self.grade = ""
         self.period = "P3"
         self.name_template = "E.S.A._{grade}_{period}_{session}_{year}"
-        self.title_template = "Evaluaciones de Suficiencia Acad\u00e9mica - {grade} - {period} - {session} - {year}"
+        self.title_template = "Evaluaciones de Suficiencia Académica - {grade} - {period} - {session} - {year}"
 
         self.sessions = []
         self._selected_session = -1
@@ -1033,7 +1043,9 @@ class DesktopApp(QMainWindow):
         self._add_session()
         self._apply_theme()
 
-        icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.png")
+        icon_file = get_resource_path("app_icon.png")
+        if not os.path.exists(icon_file):
+            icon_file = get_resource_path("app_icon.ico")
         if os.path.exists(icon_file):
             app_icon = QIcon(icon_file)
             self.setWindowIcon(app_icon)
@@ -2273,7 +2285,7 @@ class DesktopApp(QMainWindow):
         self.stop_btn.setObjectName("btn-red")
         self.stop_btn.setMinimumHeight(40)
         self.stop_btn.clicked.connect(self._stop_generation)
-        self._reg_icon(self.stop_btn, "fa5s.stop-circle", "#ffffff")
+        self.stop_btn.setIcon(qta.icon("fa5s.stop", color="#ffffff", color_disabled="#ffffff"))
         self.stop_btn.hide()
         btn_layout.addWidget(self.stop_btn)
 
@@ -2570,10 +2582,12 @@ class DesktopApp(QMainWindow):
     def _stop_generation(self):
         if self.processing and not self._stop_requested:
             self._stop_requested = True
-            self.stop_btn.setEnabled(False)
+            if hasattr(self, "_worker") and self._worker:
+                self._worker.stop_requested = True
+            self.stop_btn.setIcon(qta.icon("fa5s.stop", color="#fca5a5", color_disabled="#fca5a5"))
             self.stop_btn.setText("  Cancelando...")
             self.stop_btn.setStyleSheet("""
-                QPushButton {
+                QPushButton, QPushButton:disabled {
                     background-color: #7f1d1d;
                     color: #fca5a5;
                     border: 1px solid #991b1b;
@@ -2583,9 +2597,10 @@ class DesktopApp(QMainWindow):
                     min-height: 40px;
                 }
             """)
+            self.stop_btn.setEnabled(False)
             self.status.setText("Cancelando...")
             self._set_status_color("orange")
-            self._log("\u26a0\ufe0f Cancelaci\u00f3n solicitada por el usuario...")
+            self._log("⚠️ Cancelación solicitada por el usuario...")
 
     def _generate_all(self):
         if self.processing:
@@ -2612,21 +2627,21 @@ class DesktopApp(QMainWindow):
             return
 
         empty_subs = [
-            f"{s['name']} \u2794 {sub['name']}"
+            f"{s['name']} ➔ {sub['name']}"
             for s in self.sessions for sub in s["subsessions"]
             if not sub["files"]
         ]
         if empty_subs:
             count = len(empty_subs)
-            preview_subs = "\n".join(f"  \u2022 {name}" for name in empty_subs[:6])
+            preview_subs = "\n".join(f"  • {name}" for name in empty_subs[:6])
             if count > 6:
                 rem = count - 6
-                rem_str = "1 subsesi\u00f3n m\u00e1s" if rem == 1 else f"{rem} subsesiones m\u00e1s"
+                rem_str = "1 subsesión más" if rem == 1 else f"{rem} subsesiones más"
                 preview_subs += f"\n  ...y {rem_str}"
 
             if count == 1:
-                dlg_title = "Subsesi\u00f3n sin archivos"
-                msg_header = "Se detect\u00f3 1 subsesi\u00f3n sin archivos asignados:"
+                dlg_title = "Subsesión sin archivos"
+                msg_header = "Se detectó 1 subsesión sin archivos asignados:"
             else:
                 dlg_title = "Subsesiones sin archivos"
                 msg_header = f"Se detectaron {count} subsesiones sin archivos asignados:"
@@ -2634,7 +2649,7 @@ class DesktopApp(QMainWindow):
             msg = (
                 f"{msg_header}\n\n"
                 f"{preview_subs}\n\n"
-                "\u00bfDeseas omitir este aviso y continuar con la generaci\u00f3n de las dem\u00e1s subsesiones?"
+                "¿Deseas omitir este aviso y continuar con la generación de las demás subsesiones?"
             )
             if not self._ask_yes_no(dlg_title, msg):
                 return
@@ -2643,6 +2658,22 @@ class DesktopApp(QMainWindow):
         self._stop_requested = False
 
         self.generate_btn.hide()
+        self.stop_btn.setIcon(qta.icon("fa5s.stop", color="#ffffff", color_disabled="#ffffff"))
+        self.stop_btn.setText("  DETENER")
+        self.stop_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #dc2626;
+                color: #ffffff;
+                border: 1px solid #b91c1c;
+                border-radius: 6px;
+                font-weight: 700;
+                font-size: 13px;
+                min-height: 40px;
+            }
+            QPushButton:hover {
+                background-color: #ef4444;
+            }
+        """)
         self.stop_btn.show()
         self.stop_btn.setEnabled(True)
 
@@ -2793,7 +2824,7 @@ class GesaSplashScreen(QSplashScreen):
         painter.drawRoundedRect(2, 2, 516, 256, 16, 16)
 
         # Draw Icon (prefer SVG for crisp vector rendering)
-        svg_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "book-check.svg")
+        svg_file = get_resource_path("book-check.svg")
         if os.path.exists(svg_file):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(badge_bg)
@@ -2848,9 +2879,9 @@ if __name__ == "__main__":
     app.setOrganizationName("GESA")
     app.setDesktopFileName("GESA.lnk")
 
-    icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.ico")
+    icon_file = get_resource_path("app_icon.ico")
     if not os.path.exists(icon_file):
-        icon_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_icon.png")
+        icon_file = get_resource_path("app_icon.png")
     if os.path.exists(icon_file):
         app.setWindowIcon(QIcon(icon_file))
 

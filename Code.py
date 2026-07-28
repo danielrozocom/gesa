@@ -120,13 +120,13 @@ def freeze_subdocument_fonts(doc):
 
 
 def add_dynamic_page_number_to_footer(paragraph, doc=None):
-    font_name = get_document_default_font(doc) if doc else None
+    font_name = "Century Gothic"
 
     def add_field(p, field_text, bold=True):
-        r_pr_inner = f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>' if font_name else ''
+        r_pr_inner = f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/><w:sz {nsdecls("w")} w:val="22"/><w:szCs {nsdecls("w")} w:val="22"/>'
         if bold:
             r_pr_inner += '<w:b/><w:bCs/>'
-        r_pr = f'<w:rPr>{r_pr_inner}</w:rPr>' if r_pr_inner else ''
+        r_pr = f'<w:rPr>{r_pr_inner}</w:rPr>'
 
         fld_begin = parse_xml(f'<w:r {nsdecls("w")}>{r_pr}<w:fldChar w:fldCharType="begin"/></w:r>')
         fld_instr = parse_xml(f'<w:r {nsdecls("w")}>{r_pr}<w:instrText xml:space="preserve"> {field_text} </w:instrText></w:r>')
@@ -139,14 +139,14 @@ def add_dynamic_page_number_to_footer(paragraph, doc=None):
         p._element.append(fld_end)
 
     r1 = paragraph.add_run("Página ")
-    if font_name:
-        r1.font.name = font_name
+    r1.font.name = font_name
+    r1.font.size = Pt(11)
 
     add_field(paragraph, "PAGE", bold=True)
 
     r2 = paragraph.add_run(" de ")
-    if font_name:
-        r2.font.name = font_name
+    r2.font.name = font_name
+    r2.font.size = Pt(11)
 
     add_field(paragraph, "NUMPAGES", bold=True)
 
@@ -490,9 +490,50 @@ def _ensure_ends_with_period(paragraph):
 
 
 def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="Century Gothic"):
-    text = re.sub(r'\s+', ' ', p.text.replace('\t', ' ')).strip()
+    raw_text = p.text.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ').strip()
+    text = re.sub(r'\s+', ' ', raw_text)
+    if not text or _has_drawing(p._element):
+        return False
+
+    # Check if paragraph contains BOTH Competencia/Competence AND Componente/Component on the same line/paragraph
+    m_comp = re.search(r'\b(Competencia|Competence)\s*[:\-]?\s*(.*?)(?=\b(?:Componente|Component)\b|$)', text, re.IGNORECASE)
+    m_compo = re.search(r'\b(Componente|Component)\s*[:\-]?\s*(.*?)$', text, re.IGNORECASE)
+
+    if m_comp and m_compo and m_comp.start() < m_compo.start() and m_compo.start() > 0:
+        c1_label, c1_val = m_comp.group(1), m_comp.group(2).strip()
+        c2_label, c2_val = m_compo.group(1), m_compo.group(2).strip()
+
+        p.text = ""
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        lang1 = force_lang or ("en" if 'competence' in c1_label.lower() else "es")
+        lbl1 = "Competence" if lang1 == "en" else "Competencia"
+        val1 = _normalize_case(c1_val)
+        if val1 and not val1.endswith(('.', ':', ';', '!', '?')):
+            val1 += '.'
+        _add_styled_run(p, f"{lbl1}: ", bold=True, size_pt=11, font_name=font_name)
+        _add_styled_run(p, val1, bold=False, size_pt=11, font_name=font_name)
+
+        p_elem = p._element
+        parent = p_elem.getparent()
+        if parent is not None and c2_val.strip(' .:-'):
+            p2_xml = parse_xml(f'<w:p {nsdecls("w")}/>')
+            p_elem.addnext(p2_xml)
+            from docx.text.paragraph import Paragraph
+            p2_obj = Paragraph(p2_xml, p._composite)
+            lang2 = force_lang or ("en" if 'component' in c2_label.lower() else "es")
+            lbl2 = "Component" if lang2 == "en" else "Componente"
+            val2 = _normalize_case(c2_val)
+            if val2 and not val2.endswith(('.', ':', ';', '!', '?')):
+                val2 += '.'
+            _add_styled_run(p2_obj, f"{lbl2}: ", bold=True, size_pt=11, font_name=font_name)
+            _add_styled_run(p2_obj, val2, bold=False, size_pt=11, font_name=font_name)
+            p2_obj.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            remove_indents(p2_obj)
+            set_single_line_spacing(p2_obj)
+        return True
+
     m = re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
-    if m and not _has_drawing(p._element):
+    if m:
         raw_val = m.group(2).strip()
         if not raw_val or raw_val.strip(' .:-') == '':
             _safe_remove_para(p)
@@ -684,6 +725,9 @@ def inject_list_definitions(doc, start_number=1):
                     </w:pPr>
                     <w:rPr>
                         <w:b w:val="1"/>
+                        <w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Century Gothic"/>
+                        <w:sz w:val="22"/>
+                        <w:szCs w:val="22"/>
                     </w:rPr>
                 </w:lvl>
             </w:abstractNum>
@@ -705,6 +749,9 @@ def inject_list_definitions(doc, start_number=1):
                     </w:pPr>
                     <w:rPr>
                         <w:b w:val="1"/>
+                        <w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Century Gothic"/>
+                        <w:sz w:val="22"/>
+                        <w:szCs w:val="22"/>
                     </w:rPr>
                 </w:lvl>
             </w:abstractNum>
@@ -824,14 +871,23 @@ def apply_formatting_to_document(doc):
     # Process all paragraphs in the document body
     for p_elem in doc.element.body.xpath('.//w:p'):
         para = Paragraph(p_elem, doc)
+        text = para.text.strip()
+        
+        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]', text, re.IGNORECASE))
         
         if not _has_drawing(p_elem):
-            para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            if is_comp:
+                para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            else:
+                para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             
-        _remove_numpr(para)
+        # Do not strip numPr globally so native bullets are preserved!
         format_paragraph(para, doc)
         set_single_line_spacing(para)
         strip_leading_tabs(para)
+        
+        if is_comp:
+            para.alignment = WD_ALIGN_PARAGRAPH.LEFT
         
         # If paragraph is empty (a line break / empty spacing line), ensure it has a run with 11pt font so height is uniform
         if not para.runs and not _has_drawing(p_elem):
@@ -870,16 +926,38 @@ def apply_formatting_to_document(doc):
         else:
             szCs.set(qn('w:val'), '22')
 
-    # Ensure numbering.xml has 11pt font size (22 half-pts) for all list bullets/numbers
+    # Ensure 100% of list bullets and list numbers in numbering.xml are Century Gothic 11pt
     try:
         if hasattr(doc.part, 'numbering_part') and doc.part.numbering_part is not None:
             num_xml = doc.part.numbering_part.element
-            for sz in num_xml.xpath('.//w:sz | .//w:szCs'):
-                sz.set(qn('w:val'), '22')
-            for rFonts in num_xml.xpath('.//w:rFonts'):
-                rFonts.set(qn('w:ascii'), font_name)
-                rFonts.set(qn('w:hAnsi'), font_name)
-                rFonts.set(qn('w:cs'), font_name)
+            for lvl in num_xml.xpath('.//w:lvl'):
+                rPr = lvl.find(f'{{{wns}}}rPr')
+                if rPr is None:
+                    rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
+                    lvl.append(rPr)
+                
+                rFonts = rPr.find(f'{{{wns}}}rFonts')
+                if rFonts is None:
+                    rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
+                    rPr.append(rFonts)
+                else:
+                    rFonts.set(qn('w:ascii'), font_name)
+                    rFonts.set(qn('w:hAnsi'), font_name)
+                    rFonts.set(qn('w:cs'), font_name)
+                    
+                sz = rPr.find(f'{{{wns}}}sz')
+                if sz is None:
+                    sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="22"/>')
+                    rPr.append(sz)
+                else:
+                    sz.set(qn('w:val'), '22')
+                    
+                szCs = rPr.find(f'{{{wns}}}szCs')
+                if szCs is None:
+                    szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="22"/>')
+                    rPr.append(szCs)
+                else:
+                    szCs.set(qn('w:val'), '22')
     except Exception:
         pass
 
@@ -977,7 +1055,7 @@ def clear_header_completely(header):
 def apply_section0_page_setup(section):
     section.page_width = Inches(8.5)
     section.page_height = Inches(11)
-    section.top_margin = Cm(5.0)
+    section.top_margin = Cm(1.2)
     section.bottom_margin = Cm(1.2)
     section.left_margin = Cm(1.2)
     section.right_margin = Cm(1.2)
@@ -1324,13 +1402,12 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         if not os.path.exists(fp):
             continue
         sd = Document(fp)
-        freeze_subdocument_fonts(sd)
         _resolve_autonumbering(sd)
         cur = apply_renumbering_and_ranges(sd, cur)
-        apply_formatting_to_document(sd)
         process_competencias_and_componentes(sd)
         ensure_proper_spacing_between_questions(sd)
         reset_letter_sequence(sd)
+        apply_formatting_to_document(sd)
 
         # Clear headers/footers from sub-documents so they inherit the template's
         for sec in sd.sections:
@@ -1360,6 +1437,16 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
     replace_in_all(tpl, replacements_map)
     for sec in tpl.sections:
         force_single_column(sec)
+
+    # Insert a sentinel bookmark at the END of the template body so we can
+    # detect exactly where the template ends and the sub-document content begins
+    _SENTINEL_ID = "99998"
+    _SENTINEL_NAME = "gesa_tpl_end"
+    sentinel_p = parse_xml(
+        f'<w:p {nsdecls("w")}><w:bookmarkStart w:id="{_SENTINEL_ID}" w:name="{_SENTINEL_NAME}"/><w:bookmarkEnd w:id="{_SENTINEL_ID}"/></w:p>'
+    )
+    tpl.element.body.append(sentinel_p)
+
     prepped = os.path.join(tmp_dir, 'template_prepped.docx')
     tpl.save(prepped)
 
@@ -1457,9 +1544,12 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
     final.core_properties.category = f"{eval_prefix} de Suficiencia Académica"
     final.core_properties.content_status = config_data.get('period', '')
 
-    for sec in final.sections:
-        # Enforce single column
-        force_single_column(sec)
+    for idx, sec in enumerate(final.sections):
+        if idx == 0:
+            apply_section0_page_setup(sec)
+        else:
+            apply_subsequent_page_setup(sec)
+
         # Strip all header references from every section (defensive)
         sectPr = sec._sectPr
         for ref in list(sectPr.findall(qn('w:headerReference'))):
@@ -1471,11 +1561,79 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         sec.footer.is_linked_to_previous = False
         setup_footer_page_number(sec.footer, doc=final)
 
+    # ── Apply Century Gothic 11pt ONLY to subdocument content (after sentinel) ──
+    # Find the sentinel bookmark that marks where template ends
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    _SENTINEL_NAME = "gesa_tpl_end"
+    sentinel_elem = None
+    body_children = list(final.element.body)
+    for idx_c, child in enumerate(body_children):
+        # Look for bookmarkStart with our sentinel name inside any paragraph
+        bk_starts = child.xpath(
+            f'.//w:bookmarkStart[@w:name="{_SENTINEL_NAME}"]',
+            namespaces={'w': wns}
+        )
+        if bk_starts:
+            sentinel_elem = child
+            break
+
+    if sentinel_elem is not None:
+        # Remove the sentinel paragraph itself (it's invisible but keep it clean)
+        try:
+            sentinel_elem.getparent().remove(sentinel_elem)
+        except Exception:
+            pass
+        # Rebuild body_children after removal
+        body_children = list(final.element.body)
+        # Find the new position: all elements that come AFTER sentinel position
+        # Since we removed sentinel, subdoc content is now at the tail of body
+        # Count template elements: count up to where sentinel was (idx_c)
+        # Elements at index >= idx_c are subdocument content
+        subdoc_start_idx = idx_c
+    else:
+        # Fallback: if sentinel not found, skip body reformatting to protect template
+        subdoc_start_idx = len(body_children)  # format nothing
+
+    font_name = "Century Gothic"
+    subdoc_elements = body_children[subdoc_start_idx:]
+    from docx.text.paragraph import Paragraph as _Paragraph
+    for elem in subdoc_elements:
+        # Format paragraph alignment
+        if elem.tag.endswith('}p') or elem.tag == 'p':
+            para = _Paragraph(elem, final)
+            text = para.text.strip()
+            is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]', text, re.IGNORECASE))
+            if not _has_drawing(elem):
+                para.alignment = WD_ALIGN_PARAGRAPH.LEFT if is_comp else WD_ALIGN_PARAGRAPH.JUSTIFY
+        # Format all runs inside this element (paragraphs, tables, etc.)
+        for r_elem in elem.xpath('.//w:r', namespaces={'w': wns}):
+            rPr = r_elem.find(f'{{{wns}}}rPr')
+            if rPr is None:
+                rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
+                r_elem.insert(0, rPr)
+            rFonts = rPr.find(f'{{{wns}}}rFonts')
+            if rFonts is None:
+                rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
+                rPr.append(rFonts)
+            else:
+                rFonts.set(qn('w:ascii'), font_name)
+                rFonts.set(qn('w:hAnsi'), font_name)
+                rFonts.set(qn('w:cs'), font_name)
+            sz = rPr.find(f'{{{wns}}}sz')
+            if sz is None:
+                sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="22"/>')
+                rPr.append(sz)
+            else:
+                sz.set(qn('w:val'), '22')
+            szCs = rPr.find(f'{{{wns}}}szCs')
+            if szCs is None:
+                szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="22"/>')
+                rPr.append(szCs)
+            else:
+                szCs.set(qn('w:val'), '22')
+
     # Apply native numbering to the fully merged document
     apply_native_lists_to_final_doc(final, start_offset=start_offset)
-
-    # Re-apply global document formatting to guarantee 11pt font size and single line spacing on all elements
-    apply_formatting_to_document(final)
 
     if os.path.exists(output_path):
         for _ in range(5):
