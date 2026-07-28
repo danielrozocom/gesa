@@ -7,10 +7,6 @@ import time
 import zipfile
 import tempfile
 import shutil
-import ipywidgets as widgets
-from IPython.display import display, clear_output, HTML
-import win32com.client as win32
-
 from docx import Document
 from docx.shared import Pt, Inches, Cm
 from docx.oxml import parse_xml
@@ -1438,12 +1434,12 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
     for sec in tpl.sections:
         force_single_column(sec)
 
-    # Insert a sentinel bookmark at the END of the template body so we can
-    # detect exactly where the template ends and the sub-document content begins
-    _SENTINEL_ID = "99998"
-    _SENTINEL_NAME = "gesa_tpl_end"
+    # Insert a sentinel paragraph with unique text at the END of the template body so we can
+    # detect exactly where the template ends and the sub-document content begins.
+    # MUST have real text content (not just a bookmark) so Word COM does not strip it.
+    _SENTINEL_TEXT = "###GESA_SPLIT###"
     sentinel_p = parse_xml(
-        f'<w:p {nsdecls("w")}><w:bookmarkStart w:id="{_SENTINEL_ID}" w:name="{_SENTINEL_NAME}"/><w:bookmarkEnd w:id="{_SENTINEL_ID}"/></w:p>'
+        f'<w:p {nsdecls("w")}><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="2"/><w:szCs w:val="2"/><w:color w:val="FFFFFF"/></w:rPr><w:t xml:space="preserve">{_SENTINEL_TEXT}</w:t></w:r></w:p>'
     )
     tpl.element.body.append(sentinel_p)
 
@@ -1454,6 +1450,7 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
     com_success = False
 
     # ── Attempt 1: Word COM ────────────────────────────────────
+    import win32com.client as win32
     word = None
     doc = None
     try:
@@ -1562,50 +1559,46 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         setup_footer_page_number(sec.footer, doc=final)
 
     # ── Apply Century Gothic 11pt ONLY to subdocument content (after sentinel) ──
-    # Find the sentinel bookmark that marks where template ends
+    # Find the sentinel paragraph by its unique text (more robust than bookmark —
+    # Word COM strips empty paragraphs and may remove bookmarks)
     wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-    _SENTINEL_NAME = "gesa_tpl_end"
+    _SENTINEL_TEXT = "###GESA_SPLIT###"
     sentinel_elem = None
     body_children = list(final.element.body)
     for idx_c, child in enumerate(body_children):
-        # Look for bookmarkStart with our sentinel name inside any paragraph
-        bk_starts = child.xpath(
-            f'.//w:bookmarkStart[@w:name="{_SENTINEL_NAME}"]',
-            namespaces={'w': wns}
-        )
-        if bk_starts:
-            sentinel_elem = child
-            break
+        if child.tag.endswith('}p') or child.tag == 'p':
+            t_elems = child.xpath('.//w:t', namespaces={'w': wns})
+            for t in t_elems:
+                if _SENTINEL_TEXT in (t.text or ''):
+                    sentinel_elem = child
+                    break
+            if sentinel_elem is not None:
+                break
 
     if sentinel_elem is not None:
-        # Remove the sentinel paragraph itself (it's invisible but keep it clean)
         try:
             sentinel_elem.getparent().remove(sentinel_elem)
         except Exception:
             pass
-        # Rebuild body_children after removal
         body_children = list(final.element.body)
-        # Find the new position: all elements that come AFTER sentinel position
-        # Since we removed sentinel, subdoc content is now at the tail of body
-        # Count template elements: count up to where sentinel was (idx_c)
-        # Elements at index >= idx_c are subdocument content
         subdoc_start_idx = idx_c
     else:
-        # Fallback: if sentinel not found, skip body reformatting to protect template
-        subdoc_start_idx = len(body_children)  # format nothing
+        # Fallback: apply Century Gothic to the entire body.
+        # If sentinel was lost (e.g. Word COM stripped it), this ensures
+        # subdoc content still gets the correct font. The template may also
+        # get Century Gothic, but that is far better than not applying it.
+        subdoc_start_idx = 0
 
     font_name = "Century Gothic"
     subdoc_elements = body_children[subdoc_start_idx:]
     from docx.text.paragraph import Paragraph as _Paragraph
     for elem in subdoc_elements:
-        # Format paragraph alignment
         if elem.tag.endswith('}p') or elem.tag == 'p':
             para = _Paragraph(elem, final)
             text = para.text.strip()
             is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]', text, re.IGNORECASE))
             if not _has_drawing(elem):
                 para.alignment = WD_ALIGN_PARAGRAPH.LEFT if is_comp else WD_ALIGN_PARAGRAPH.JUSTIFY
-        # Format all runs inside this element (paragraphs, tables, etc.)
         for r_elem in elem.xpath('.//w:r', namespaces={'w': wns}):
             rPr = r_elem.find(f'{{{wns}}}rPr')
             if rPr is None:

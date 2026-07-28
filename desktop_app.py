@@ -44,9 +44,10 @@ from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QLocale, QSett
 from PyQt6.QtGui import QTextCharFormat, QColor, QPalette, QShortcut, QKeySequence, QIcon, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 
-import qtawesome as qta
 
-from Code import GRADES_INFO, merge_docx_with_guaranteed_header, expand_template
+def _qta():
+    import qtawesome as _qta_mod
+    return _qta_mod
 
 
 try:
@@ -185,9 +186,9 @@ class DateSelector(QWidget):
         prev_btn = cal.findChild(QToolButton, "qt_calendar_prevmonth")
         next_btn = cal.findChild(QToolButton, "qt_calendar_nextmonth")
         if prev_btn:
-            prev_btn.setIcon(qta.icon("fa5s.chevron-left", color=text_color))
+            prev_btn.setIcon(_qta().icon("fa5s.chevron-left", color=text_color))
         if next_btn:
-            next_btn.setIcon(qta.icon("fa5s.chevron-right", color=text_color))
+            next_btn.setIcon(_qta().icon("fa5s.chevron-right", color=text_color))
 
         fmt_weekend = QTextCharFormat()
         fmt_weekend.setForeground(QColor(weekend_color))
@@ -231,8 +232,8 @@ class DateSelector(QWidget):
 SHADCN_DARK = {
     "bg": "#0a0e17", "card": "#131927", "border": "#1e293b",
     "text": "#f8fafc", "muted": "#94a3b8",
-    "blue": "#4f66a8", "green": "#10b981", "red": "#ef4444",
-    "blue_hover": "#364B87", "green_hover": "#059669", "red_hover": "#dc2626",
+    "blue": "#93abd9", "green": "#10b981", "red": "#ef4444",
+    "blue_hover": "#7d92c3", "green_hover": "#059669", "red_hover": "#dc2626",
     "input_bg": "#131927",
     "hover_bg": "#1e293b",
     "disabled_bg": "#1e293b",
@@ -889,6 +890,7 @@ class GenerateWorker(QObject):
         self.stop_requested = False
 
     def run(self):
+        from Code import GRADES_INFO, merge_docx_with_guaranteed_header, expand_template
         grade_info = GRADES_INFO[self.grade]
         clean_grade = self.grade.replace("\u00b0", "")
         results = []
@@ -1314,6 +1316,7 @@ class DesktopApp(QMainWindow):
     def _update_preview(self, sub_name=None):
         if not hasattr(self, "preview_box"):
             return
+        from Code import GRADES_INFO, expand_template
         s = self._session()
         sub = self._sub()
 
@@ -1640,7 +1643,7 @@ class DesktopApp(QMainWindow):
     def _make_icon(self, name, color_key="muted"):
         c = self._theme_colors()
         color = c.get(color_key, color_key)
-        return qta.icon(name, color=color)
+        return _qta().icon(name, color=color)
 
     def _reg_icon(self, btn, icon_name, color_key="muted"):
         self._icon_refs.append((btn, icon_name, color_key))
@@ -1687,7 +1690,7 @@ class DesktopApp(QMainWindow):
         dlg.setText(message)
         c = self._theme_colors()
         try:
-            ico = qta.icon("fa5s.check-circle", color=c["green"])
+            ico = _qta().icon("fa5s.check-circle", color=c["green"])
             dlg.setIconPixmap(ico.pixmap(48, 48))
         except Exception:
             dlg.setIcon(QMessageBox.Icon.Information)
@@ -1704,7 +1707,7 @@ class DesktopApp(QMainWindow):
         dlg.setText(message)
         c = self._theme_colors()
         try:
-            ico = qta.icon("fa5s.exclamation-triangle", color="#f59e0b" if self._effective_theme() == "dark" else "#d97706")
+            ico = _qta().icon("fa5s.exclamation-triangle", color="#f59e0b" if self._effective_theme() == "dark" else "#d97706")
             dlg.setIconPixmap(ico.pixmap(48, 48))
         except Exception:
             dlg.setIcon(QMessageBox.Icon.Warning)
@@ -1722,7 +1725,7 @@ class DesktopApp(QMainWindow):
         dlg.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         c = self._theme_colors()
         try:
-            ico = qta.icon("fa5s.times-circle", color=c["red"])
+            ico = _qta().icon("fa5s.times-circle", color=c["red"])
             dlg.setIconPixmap(ico.pixmap(48, 48))
         except Exception:
             dlg.setIcon(QMessageBox.Icon.Critical)
@@ -1743,7 +1746,7 @@ class DesktopApp(QMainWindow):
         dlg.setText(message)
         c = self._theme_colors()
         try:
-            ico = qta.icon("fa5s.question-circle", color=c["blue"])
+            ico = _qta().icon("fa5s.question-circle", color=c["blue"])
             dlg.setIconPixmap(ico.pixmap(48, 48))
         except Exception:
             dlg.setIcon(QMessageBox.Icon.Question)
@@ -1886,6 +1889,7 @@ class DesktopApp(QMainWindow):
     # ─── build UI ──────────────────────────────────────────────
 
     def _build(self):
+        from Code import GRADES_INFO
         central = QWidget()
         central.setObjectName("central")
         self.setCentralWidget(central)
@@ -2285,7 +2289,7 @@ class DesktopApp(QMainWindow):
         self.stop_btn.setObjectName("btn-red")
         self.stop_btn.setMinimumHeight(40)
         self.stop_btn.clicked.connect(self._stop_generation)
-        self.stop_btn.setIcon(qta.icon("fa5s.stop", color="#ffffff", color_disabled="#ffffff"))
+        self.stop_btn.setIcon(_qta().icon("fa5s.stop", color="#ffffff", color_disabled="#ffffff"))
         self.stop_btn.hide()
         btn_layout.addWidget(self.stop_btn)
 
@@ -2584,7 +2588,7 @@ class DesktopApp(QMainWindow):
             self._stop_requested = True
             if hasattr(self, "_worker") and self._worker:
                 self._worker.stop_requested = True
-            self.stop_btn.setIcon(qta.icon("fa5s.stop", color="#fca5a5", color_disabled="#fca5a5"))
+            self.stop_btn.setIcon(_qta().icon("fa5s.stop", color="#fca5a5", color_disabled="#fca5a5"))
             self.stop_btn.setText("  Cancelando...")
             self.stop_btn.setStyleSheet("""
                 QPushButton, QPushButton:disabled {
@@ -2658,7 +2662,7 @@ class DesktopApp(QMainWindow):
         self._stop_requested = False
 
         self.generate_btn.hide()
-        self.stop_btn.setIcon(qta.icon("fa5s.stop", color="#ffffff", color_disabled="#ffffff"))
+        self.stop_btn.setIcon(_qta().icon("fa5s.stop", color="#ffffff", color_disabled="#ffffff"))
         self.stop_btn.setText("  DETENER")
         self.stop_btn.setStyleSheet("""
             QPushButton {
@@ -2783,7 +2787,7 @@ def global_excepthook(exctype, value, traceback_obj):
         msg_box.setText(full_msg)
         msg_box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.TextSelectableByKeyboard)
         try:
-            ico = qta.icon("fa5s.times-circle", color="#cf222e")
+            ico = _qta().icon("fa5s.times-circle", color="#cf222e")
             msg_box.setIconPixmap(ico.pixmap(48, 48))
         except Exception:
             msg_box.setIcon(QMessageBox.Icon.Critical)
