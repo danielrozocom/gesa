@@ -823,22 +823,22 @@ class GenerateWorker(QObject):
             clean_num = self.grade.replace("\u00b0", "").strip()
             if grade_info["multicourse"]:
                 if clean_num in ("10", "11"):
-                    grade_display = f"{clean_num}-___"
+                    p_c_val = f"{clean_num}-___"
                 else:
-                    grade_display = f"{clean_num}0___"
+                    p_c_val = f"{clean_num}0___"
             else:
-                grade_display = self.grade
+                p_c_val = self.grade
 
             config = {
                 "level": grade_info["level"],
                 "grade": self.grade,
-                "grade_clean": grade_display,
-                "grade_display": grade_display,
+                "grade_clean": self.grade,
+                "grade_display": self.grade,
                 "period": self.period,
                 "session_code": sub_code,
                 "date": fecha,
                 "year": s["year"],
-                "p_c_value": grade_display,
+                "p_c_value": p_c_val,
                 "title_template": self.title_template,
             }
             out = filename
@@ -1100,7 +1100,25 @@ class DesktopApp(QMainWindow):
         sub = self._sub()
         if sub:
             for f in sub["files"]:
-                self.files_lb.addItem(QListWidgetItem(f"  {os.path.basename(f)}"))
+                item = QListWidgetItem(f"  {os.path.basename(f)}")
+                item.setToolTip(f)
+                self.files_lb.addItem(item)
+
+    def _open_file_location(self, item=None):
+        sub = self._sub()
+        if not sub or not sub["files"]:
+            self._show_info("Aviso", "No hay archivos en la subsesi\u00f3n seleccionada.")
+            return
+        row = self.files_lb.currentRow()
+        if row < 0 or row >= len(sub["files"]):
+            row = 0
+        filepath = sub["files"][row]
+        if os.path.exists(filepath):
+            subprocess.run(f'explorer /select,"{os.path.abspath(filepath)}"', shell=True)
+        elif os.path.exists(os.path.dirname(filepath)):
+            os.startfile(os.path.dirname(filepath))
+        else:
+            self._show_warning("Archivo no encontrado", f"No se encontr\u00f3 el archivo:\n{filepath}")
 
     # ─── add / remove session / sub ────────────────────────────
 
@@ -1627,7 +1645,100 @@ class DesktopApp(QMainWindow):
 
         dlg.setDefaultButton(yes_btn)
         dlg.exec()
-        return dlg.clickedButton() == yes_btn
+    def _show_shortcodes_help(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Etiquetas y Shortcodes — GESA")
+        dlg.setMinimumWidth(560)
+        
+        is_dark = (self._effective_theme() == "dark")
+        set_window_dark_mode(dlg.winId(), is_dark)
+        c = self._theme_colors()
+
+        dlg.setStyleSheet(f"""
+            QDialog {{
+                background-color: {c["card"]};
+                color: {c["text"]};
+            }}
+            QLabel {{
+                color: {c["text"]};
+                font-family: "Segoe UI";
+            }}
+        """)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setSpacing(14)
+
+        title = QLabel("Etiquetas y Shortcodes Disponibles")
+        title.setStyleSheet(f"font-size: 16px; font-weight: 700; color: {c['blue']};")
+        layout.addWidget(title)
+
+        desc = QLabel("Usa estas etiquetas dentro de tu plantilla Word maestra (.docx) o en las plantillas de salida para automatizar la personalizaci\u00f3n:")
+        desc.setWordWrap(True)
+        desc.setStyleSheet(f"font-size: 12px; color: {c['muted']};")
+        layout.addWidget(desc)
+
+        content = QTextEdit()
+        content.setReadOnly(True)
+        content.setHtml(f"""
+        <style>
+            body {{ font-family: 'Segoe UI', sans-serif; font-size: 12px; color: {c['text']}; line-height: 1.4; }}
+            h4 {{ margin-top: 10px; margin-bottom: 6px; color: {c['blue']}; font-size: 13px; }}
+            p {{ margin-top: 2px; margin-bottom: 8px; font-size: 11px; }}
+            table {{ border-collapse: collapse; width: 100%; margin-bottom: 12px; }}
+            th {{ background-color: {c['hover_bg']}; color: {c['text']}; padding: 6px 8px; text-align: left; font-size: 11px; border: 1px solid {c['border']}; }}
+            td {{ padding: 6px 8px; border: 1px solid {c['border']}; font-size: 11px; }}
+            code {{ font-family: 'Consolas', monospace; font-size: 11px; background-color: {c['hover_bg']}; padding: 2px 6px; border-radius: 4px; color: {c['blue']}; font-weight: bold; }}
+        </style>
+
+        <h4>📄 1. Etiquetas para la Plantilla Maestra en Word (.docx)</h4>
+        <p>Escribe estas etiquetas en el cuerpo o encabezado de tu documento Word:</p>
+        <table>
+            <tr><th>Etiqueta</th><th>Descripción</th><th>Ejemplo de Salida</th></tr>
+            <tr><td><code>(GRADE)</code></td><td>Grado del examen</td><td><b>6°</b></td></tr>
+            <tr><td><code>(P_C)</code></td><td>Casilla de llenado de curso</td><td><b>60___</b> (6°-9°), <b>10-___</b> (10°-11°)</td></tr>
+            <tr><td><code>(EDU_LEVEL)</code></td><td>Nivel educativo</td><td><b>BÁSICA SECUNDARIA</b></td></tr>
+            <tr><td><code>(TERM)</code></td><td>Periodo académico</td><td><b>P3</b></td></tr>
+            <tr><td><code>(SESSION)</code></td><td>Código de subsesión</td><td><b>S1.1</b></td></tr>
+            <tr><td><code>(DATE)</code></td><td>Fecha de aplicación</td><td><b>15/SEP/2026</b></td></tr>
+        </table>
+
+        <h4>🏷️ 2. Etiquetas para Nombre de Archivo y Título del Documento</h4>
+        <p>Usa estas etiquetas en los campos de entrada de la barra lateral:</p>
+        <table>
+            <tr><th>Etiqueta</th><th>Descripción</th><th>Ejemplo</th></tr>
+            <tr><td><code>{{grade}}</code></td><td>Grado asignado</td><td>6° / Prejardín</td></tr>
+            <tr><td><code>{{period}}</code></td><td>Periodo académico</td><td>P3</td></tr>
+            <tr><td><code>{{session}}</code></td><td>Código de subsesión</td><td>S1.1</td></tr>
+            <tr><td><code>{{year}}</code></td><td>Año configurado</td><td>2026</td></tr>
+            <tr><td><code>{{level}}</code></td><td>Nivel educativo</td><td>Básica Secundaria</td></tr>
+            <tr><td><code>{{day}}</code></td><td>Día de aplicación</td><td>15</td></tr>
+            <tr><td><code>{{month}}</code></td><td>Mes abreviado</td><td>SEP</td></tr>
+        </table>
+        """)
+        layout.addWidget(content)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        close_btn = QPushButton("Entendido")
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {c["blue"]};
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                padding: 7px 24px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: {c["blue_hover"]};
+            }}
+        """)
+        close_btn.clicked.connect(dlg.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+        dlg.exec()
 
     # ─── build UI ──────────────────────────────────────────────
 
@@ -1689,9 +1800,17 @@ class DesktopApp(QMainWindow):
         sidebar_layout.addWidget(sidebar_title)
 
         # Template
+        tmpl_lbl_row = QHBoxLayout()
+        tmpl_lbl_row.setSpacing(4)
         tmpl_label = QLabel("Plantilla Maestra")
         tmpl_label.setProperty("class", "muted")
-        sidebar_layout.addWidget(tmpl_label)
+        tmpl_lbl_row.addWidget(tmpl_label)
+        tmpl_lbl_row.addStretch()
+        tmpl_help_btn = self._make_icon_btn("fa5s.question-circle", "btn-ghost", "Ver guía de etiquetas / shortcodes", "blue")
+        tmpl_help_btn.clicked.connect(self._show_shortcodes_help)
+        tmpl_lbl_row.addWidget(tmpl_help_btn)
+        sidebar_layout.addLayout(tmpl_lbl_row)
+
         tmpl_row = QHBoxLayout()
         tmpl_row.setSpacing(6)
         self.template_entry = QLineEdit()
@@ -1766,9 +1885,16 @@ class DesktopApp(QMainWindow):
         sidebar_layout.addWidget(div2)
 
         # Naming templates
+        tpl_lbl_row = QHBoxLayout()
+        tpl_lbl_row.setSpacing(4)
         tpl_label = QLabel("Plantillas de Salida")
         tpl_label.setProperty("class", "section-title")
-        sidebar_layout.addWidget(tpl_label)
+        tpl_lbl_row.addWidget(tpl_label)
+        tpl_lbl_row.addStretch()
+        tpl_help_btn = self._make_icon_btn("fa5s.question-circle", "btn-ghost", "Ver guía de etiquetas / shortcodes", "blue")
+        tpl_help_btn.clicked.connect(self._show_shortcodes_help)
+        tpl_lbl_row.addWidget(tpl_help_btn)
+        sidebar_layout.addLayout(tpl_lbl_row)
 
         shortcodes_hint = QLabel("{grade} {period} {session} {year} {level}")
         shortcodes_hint.setProperty("class", "muted")
@@ -1910,6 +2036,10 @@ class DesktopApp(QMainWindow):
         c3_header_layout.addWidget(c3_title)
         c3_header_layout.addStretch()
 
+        c3_open = self._make_icon_btn("fa5s.folder-open", "btn-icon", "Abrir ubicaci\u00f3n del archivo en el explorador", "text")
+        c3_open.clicked.connect(self._open_file_location)
+        c3_header_layout.addWidget(c3_open)
+
         c3_up = self._make_icon_btn("fa5s.chevron-up", "btn-icon", "Subir", "muted")
         c3_up.clicked.connect(lambda: self._move_file(-1))
         c3_header_layout.addWidget(c3_up)
@@ -1932,6 +2062,7 @@ class DesktopApp(QMainWindow):
         self.files_lb.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.files_lb.reordered.connect(self._on_files_reordered)
         self.files_lb.filesDropped.connect(self._add_files_from_paths)
+        self.files_lb.itemDoubleClicked.connect(self._open_file_location)
         col3_layout.addWidget(self.files_lb)
 
         workspace.addWidget(col3)

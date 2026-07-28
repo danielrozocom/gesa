@@ -360,21 +360,6 @@ def _clear_paragraph_style_level(paragraph):
         pPr.remove(outline_elem)
 
 
-def format_paragraph(paragraph, doc_ref):
-    text = paragraph.text
-    if not text.strip():
-        return
-
-    # Strip all indents by default for clean flush-left alignment
-    remove_indents(paragraph)
-
-    if re.search(r'(NOMBRE|APELLIDO|ESTUDIANTE|ALUMNO|CURSO|GRADO|FECHA|CÓDIGO|CODIGO|NAME|DATE|CODE)\s*:\s*[_]{2,}', text, re.IGNORECASE):
-        if _has_drawing(paragraph._element):
-            for t in paragraph._element.xpath('.//w:t'):
-                t.text = ""
-        else:
-            paragraph.text = ""
-        return
 def _normalize_case(text):
     text = text.strip()
     if not text:
@@ -391,21 +376,56 @@ def _normalize_case(text):
     return text
 
 
+def _add_styled_run(paragraph, text, bold=False, size_pt=11, font_name="Century Gothic"):
+    r = paragraph.add_run(text)
+    r.bold = bold
+    r.font.name = font_name
+    r.font.size = Pt(size_pt)
+    rPr = r._r.get_or_add_rPr()
+    rFonts = rPr.find(qn('w:rFonts'))
+    if rFonts is None:
+        rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
+        rPr.append(rFonts)
+    else:
+        rFonts.set(qn('w:ascii'), font_name)
+        rFonts.set(qn('w:hAnsi'), font_name)
+        rFonts.set(qn('w:cs'), font_name)
+    sz = rPr.find(qn('w:sz'))
+    val_sz = str(int(size_pt * 2))
+    if sz is None:
+        sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="{val_sz}"/>')
+        rPr.append(sz)
+    else:
+        sz.set(qn('w:val'), val_sz)
+    return r
+
+
 def format_paragraph(paragraph, doc_ref):
-    text = paragraph.text
-    if not text.strip():
+    text = paragraph.text.strip()
+    if not text:
         return
 
     # Strip all indents by default for clean flush-left alignment
     remove_indents(paragraph)
 
-    if re.search(r'(NOMBRE|APELLIDO|ESTUDIANTE|ALUMNO|CURSO|GRADO|FECHA|CÓDIGO|CODIGO|NAME|DATE|CODE)\s*:\s*[_]{2,}', text, re.IGNORECASE):
-        if _has_drawing(paragraph._element):
-            for t in paragraph._element.xpath('.//w:t'):
-                t.text = ""
-        else:
-            paragraph.text = ""
-        return
+    # 1. Clean up redundant input document headers and teacher metadata (e.g. EVALUACIÓN BIMESTRAL, EJE TEMÁTICO, INDICADOR DE LOGRO, ESTÁNDAR, CLAVE, etc.)
+    is_redundant_header = (
+        re.search(r'(NOMBRE|APELLIDO|ESTUDIANTE|ALUMNO|CURSO|GRADO|FECHA|CÓDIGO|CODIGO|NAME|DATE|CODE)\s*:\s*[_]{2,}', text, re.IGNORECASE) or
+        re.search(r'^\s*(EVALUACI[OÓ]N\s+(BIMESTRAL|DIAGN[OÓ]STICA|FINAL|PARCIAL|DE\s+SUFICIENCIA|ACAD[EÉ]MICA|SUMATIVA)|EXAMEN\s+DE|CUESTIONARIO\s+DE|PRUEBA\s+DE)', text, re.IGNORECASE) or
+        re.search(r'^\s*(GRADO|CURSO)\s+(SEXTO|S[EÉ]PTIMO|OCTAVO|NOVENO|D[EÉ]CIMO|ONCE|PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|TRANSICI[OÓ]N|JARD[IÍ]N|PREJARD[IÍ]N|\d+[\u00b0°]?)', text, re.IGNORECASE) or
+        re.search(r'^\s*(DOCENTE|PROFESOR|PROFESORA|ASIGNATURA|MATERIA)\s*:\s*', text, re.IGNORECASE) or
+        re.search(r'^\s*[\(\[\{]?\s*(EJE\s+TEM[AÁ]TICO|EJE|TEM[AÁ]TICA|TEMA|INDICADOR(\s+DE\s+(LOGRO|DESEMPE[NÑ]O))?|EST[AÁ]NDAR|DESEMPE[NÑ]O|AFIRMACI[OÓ]N|EVIDENCIA|RESPUESTA\s+CORRECTA|CLAVE(\s+DE\s+RESPUESTA)?|NIVEL(\s+DE\s+DIFICULTAD)?)\s*[:\-]\s*', text, re.IGNORECASE)
+    )
+
+    if is_redundant_header:
+        # Don't delete if it's Competencia/Componente or a Question!
+        if not re.match(r'^(Competencia|Componente)\s*:', text, re.IGNORECASE) and not re.match(r'^\s*\d+[\.\)]', text):
+            if _has_drawing(paragraph._element):
+                for t in paragraph._element.xpath('.//w:t'):
+                    t.text = ""
+            else:
+                paragraph.text = ""
+            return
     mc = re.match(r'^(Componente|Competencia)\s*:\s*(.*)$', text, re.IGNORECASE)
     if mc:
         label = mc.group(1).capitalize()
@@ -418,8 +438,8 @@ def format_paragraph(paragraph, doc_ref):
                     t.text = ""
         else:
             paragraph.text = ""
-            rb = paragraph.add_run(f"{label}: "); rb.bold = True
-            rt = paragraph.add_run(content); rt.bold = False
+            _add_styled_run(paragraph, f"{label}: ", bold=True)
+            _add_styled_run(paragraph, content, bold=False)
         return
     # Option letter A–E — format prefix (supports A), a), A., a., (A), A)text)
     mo = re.match(r'^(\s*[\(\[\{]?([a-eA-E])\s*[\.\)\]\}\-\:\/]\s*)(?!\d)', text)
@@ -811,66 +831,92 @@ def replace_in_all(tpl, replacements_map):
 
 
 def process_competencias_and_componentes(doc):
+    font_name = "Century Gothic"
     all_paras = get_all_paragraphs(doc)
-    last_comp = None
-    last_compo = None
 
+    # Step 1: Normalize all Competencia / Componente paragraphs with Century Gothic 11pt
+    for p in all_paras:
+        t_str = p.text.strip()
+        m_lbl = re.match(r'^(Competencia|Componente)\s*:\s*(.*)$', t_str, re.IGNORECASE)
+        if m_lbl and not _has_drawing(p._element):
+            lbl_type = m_lbl.group(1).capitalize()
+            val_text = _normalize_case(m_lbl.group(2).strip())
+            p.text = ""
+            _add_styled_run(p, f"{lbl_type}: ", bold=True, size_pt=11, font_name=font_name)
+            _add_styled_run(p, val_text, bold=False, size_pt=11, font_name=font_name)
+
+    # Step 2: Ensure order (Competencia first, Componente second)
+    all_paras = get_all_paragraphs(doc)
     i = 0
-    while i < len(all_paras):
-        p = all_paras[i]
-        text = p.text.strip()
+    while i < len(all_paras) - 1:
+        p1 = all_paras[i]
+        p2 = all_paras[i + 1]
+        t1 = p1.text.strip()
+        t2 = p2.text.strip()
+        
+        m_compo = re.match(r'^Componente\s*:\s*(.*)$', t1, re.IGNORECASE)
+        m_comp = re.match(r'^Competencia\s*:\s*(.*)$', t2, re.IGNORECASE)
+        
+        if m_compo and m_comp:
+            # Swap paragraphs so Competencia is first!
+            p1_text = p1.text
+            p1.text = p2.text
+            p2.text = p1_text
+            for target_p in (p1, p2):
+                t_str = target_p.text.strip()
+                m = re.match(r'^(Competencia|Componente)\s*:\s*(.*)$', t_str, re.IGNORECASE)
+                if m and not _has_drawing(target_p._element):
+                    target_p.text = ""
+                    _add_styled_run(target_p, f"{m.group(1).capitalize()}: ", bold=True, size_pt=11, font_name=font_name)
+                    _add_styled_run(target_p, m.group(2).strip(), bold=False, size_pt=11, font_name=font_name)
+        i += 1
 
-        # Check if current is Componente and next is Competencia -> Swap order so Competencia is FIRST!
-        if i + 1 < len(all_paras):
-            next_p = all_paras[i + 1]
-            m_curr_compo = re.match(r'^Componente\s*:\s*(.*)$', text, re.IGNORECASE)
-            m_next_comp = re.match(r'^Competencia\s*:\s*(.*)$', next_p.text.strip(), re.IGNORECASE)
-            if m_curr_compo and m_next_comp:
-                p_text_temp = p.text
-                p.text = next_p.text
-                next_p.text = p_text_temp
-                for target_p in (p, next_p):
-                    t_str = target_p.text.strip()
-                    m_lbl = re.match(r'^(Competencia|Componente)\s*:\s*(.*)$', t_str, re.IGNORECASE)
-                    if m_lbl and not _has_drawing(target_p._element):
-                        target_p.text = ""
-                        r1 = target_p.add_run(f"{m_lbl.group(1).capitalize()}: ")
-                        r1.bold = True
-                        r2 = target_p.add_run(_normalize_case(m_lbl.group(2).strip()))
-                        r2.bold = False
-                text = p.text.strip()
-
-        # Deduplication check: if repeated across consecutive questions, leave ONLY ONCE!
-        m_c = re.match(r'^Competencia\s*:\s*(.*)$', text, re.IGNORECASE)
-        m_co = re.match(r'^Componente\s*:\s*(.*)$', text, re.IGNORECASE)
-
-        if m_c:
-            val = m_c.group(1).strip().lower()
-            if val == last_comp:
-                if not _has_drawing(p._element):
-                    p._element.getparent().remove(p._element)
-            else:
-                last_comp = val
-        elif m_co:
-            val = m_co.group(1).strip().lower()
-            if val == last_compo:
-                if not _has_drawing(p._element):
-                    p._element.getparent().remove(p._element)
-            else:
-                last_compo = val
-
-        # Remove blank line spaces immediately following Competencia or Componente
-        if m_c or m_co:
+    # Step 3: Remove blank lines directly under Competencia or Componente
+    all_paras = get_all_paragraphs(doc)
+    for i, p in enumerate(all_paras):
+        t_str = p.text.strip()
+        if re.match(r'^(Competencia|Componente)\s*:', t_str, re.IGNORECASE):
             j = i + 1
             while j < len(all_paras):
-                np_elem = all_paras[j]._element
-                if not all_paras[j].text.strip() and not _has_drawing(np_elem):
-                    parent = np_elem.getparent()
+                np = all_paras[j]
+                if not np.text.strip() and not _has_drawing(np._element):
+                    parent = np._element.getparent()
                     if parent is not None:
-                        parent.remove(np_elem)
+                        parent.remove(np._element)
                     j += 1
                 else:
                     break
+
+    # Step 4: Block-level Deduplication (Only remove if the PAIR Competencia & Componente is identical across consecutive questions)
+    all_paras = get_all_paragraphs(doc)
+    last_pair = (None, None)
+    
+    i = 0
+    while i < len(all_paras):
+        p = all_paras[i]
+        t_str = p.text.strip()
+        
+        m_comp = re.match(r'^Competencia\s*:\s*(.*)$', t_str, re.IGNORECASE)
+        if m_comp:
+            comp_val = m_comp.group(1).strip().lower()
+            compo_val = None
+            compo_p = None
+            
+            if i + 1 < len(all_paras):
+                m_co = re.match(r'^Componente\s*:\s*(.*)$', all_paras[i + 1].text.strip(), re.IGNORECASE)
+                if m_co:
+                    compo_val = m_co.group(1).strip().lower()
+                    compo_p = all_paras[i + 1]
+            
+            current_pair = (comp_val, compo_val)
+            if current_pair == last_pair and comp_val is not None:
+                # Remove duplicate pair!
+                if not _has_drawing(p._element):
+                    p._element.getparent().remove(p._element)
+                if compo_p is not None and not _has_drawing(compo_p._element):
+                    compo_p._element.getparent().remove(compo_p._element)
+            else:
+                last_pair = current_pair
 
         i += 1
 
@@ -878,14 +924,15 @@ def process_competencias_and_componentes(doc):
 # ── MAIN MERGE ───────────────────────────────────────────────
 
 def merge_docx_with_guaranteed_header(template_path, file_list, output_path, config_data, start_offset=0):
-    grade_val = config_data.get('grade_display', config_data.get('p_c_value', config_data.get('grade_clean', '')))
+    grade_top = config_data.get('grade', config_data.get('grade_clean', ''))
+    p_c_val = config_data.get('p_c_value', grade_top)
     replacements_map = {
         "(EDU_LEVEL)": str(config_data['level']).upper(),
-        "(GRADE)": str(grade_val).upper(),
+        "(GRADE)": str(grade_top).upper(),
         "(TERM)": str(config_data['period']).upper(),
         "(SESSION)": str(config_data['session_code']).upper(),
         "(DATE)": str(config_data['date']).upper(),
-        "(P_C)": str(grade_val),
+        "(P_C)": str(p_c_val),
     }
 
     title_context = {k: config_data.get(k, '') for k in ['grade_clean', 'period', 'session_code', 'year', 'level']}
