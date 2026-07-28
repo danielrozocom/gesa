@@ -541,6 +541,8 @@ def reset_letter_sequence(doc):
 
 def set_single_line_spacing(paragraph):
     pf = paragraph.paragraph_format
+    pf.space_before = Pt(0)
+    pf.space_after = Pt(0)
     from docx.shared import Pt as _Pt
     from docx.oxml.ns import qn as _qn
     pPr = paragraph._element.get_or_add_pPr()
