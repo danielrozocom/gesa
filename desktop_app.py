@@ -730,10 +730,11 @@ QDialog QPushButton:hover {{
 
 class ReorderableList(QListWidget):
     reordered = pyqtSignal()
+    filesDropped = pyqtSignal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
@@ -741,9 +742,31 @@ class ReorderableList(QListWidget):
         self.setMovement(QListView.Movement.Snap)
         self.setUniformItemSizes(True)
 
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
     def dropEvent(self, event):
-        super().dropEvent(event)
-        self.reordered.emit()
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+            file_paths = []
+            for url in event.mimeData().urls():
+                p = url.toLocalFile()
+                if p and os.path.isfile(p) and p.lower().endswith(".docx"):
+                    file_paths.append(p)
+            if file_paths:
+                self.filesDropped.emit(file_paths)
+        else:
+            super().dropEvent(event)
+            self.reordered.emit()
 
 
 class GenerateWorker(QObject):
@@ -1073,7 +1096,18 @@ class DesktopApp(QMainWindow):
     def _add_session(self):
         self._save_state_for_undo()
         n = len(self.sessions) + 1
-        qd = self.date_edit.date()
+        if self.sessions:
+            last_s = self.sessions[-1]
+            try:
+                y = int(last_s["year"])
+                m = MONTH_MAP.get(last_s["month"], 1)
+                d = int(last_s["day"])
+                qd = QDate(y, m, d).addDays(1)
+            except Exception:
+                qd = self.date_edit.date()
+        else:
+            qd = self.date_edit.date()
+
         self.sessions.append({
             "name": f"Sesi\u00f3n {n}",
             "day": str(qd.day()),
@@ -1149,15 +1183,17 @@ class DesktopApp(QMainWindow):
         s = self._session()
         sub = self._sub()
 
-        grade = self.grade_combo.currentText() if hasattr(self, "grade_combo") else ""
-        period = self.period_combo.currentText() if hasattr(self, "period_combo") else "P3"
+        grade_text = self.grade_combo.currentText() if hasattr(self, "grade_combo") else ""
+        period_text = self.period_combo.currentText() if hasattr(self, "period_combo") else ""
+        grade = "{grade}" if (not grade_text or grade_text.startswith("Seleccionar")) else grade_text
+        period = "{period}" if (not period_text or period_text.startswith("Seleccionar")) else period_text
         session_name = s["name"] if s else "Sesi\u00f3n 1"
         target_sub_name = sub_name if sub_name else (sub["name"] if sub else "Subsesi\u00f3n 1.1")
         sub_code = target_sub_name.replace("Subsesi\u00f3n ", "S").replace("Subsesion ", "S")
         year = s["year"] if s else "2026"
         day = s["day"] if s else "15"
         month = s["month"] if s else "SEP"
-        level = GRADES_INFO.get(grade, {}).get("level", "")
+        level = GRADES_INFO.get(grade_text, {}).get("level", "{level}")
         ctx = {
             "grade": grade,
             "period": period,
@@ -1247,17 +1283,15 @@ class DesktopApp(QMainWindow):
 
     # ─── file management ───────────────────────────────────────
 
-    def _add_files(self):
+    def _add_files_from_paths(self, paths):
         sub = self._sub()
         if sub is None:
             self._show_info("Aviso", "Selecciona una subsesi\u00f3n primero.")
             return
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, "Seleccionar ex\u00e1menes",
-            "", "Word (*.docx);;Todos (*.*)")
         if not paths:
             return
 
+        self._save_state_for_undo()
         chosen_dir = os.path.dirname(paths[0])
         resolved_any = False
 
@@ -1281,6 +1315,17 @@ class DesktopApp(QMainWindow):
         self._refresh_files()
         if resolved_any:
             self._refresh_sessions()
+
+    def _add_files(self):
+        sub = self._sub()
+        if sub is None:
+            self._show_info("Aviso", "Selecciona una subsesi\u00f3n primero.")
+            return
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Seleccionar ex\u00e1menes",
+            "", "Word (*.docx);;Todos (*.*)")
+        if paths:
+            self._add_files_from_paths(paths)
 
     def _move_file(self, direction):
         sub = self._sub()
@@ -1619,7 +1664,9 @@ class DesktopApp(QMainWindow):
         g_label.setProperty("class", "muted")
         g_col.addWidget(g_label)
         self.grade_combo = QComboBox()
-        self.grade_combo.addItems(list(GRADES_INFO.keys()))
+        self.grade_combo.addItems(["Seleccionar..."] + list(GRADES_INFO.keys()))
+        self.grade_combo.setCurrentIndex(0)
+        self.grade_combo.currentIndexChanged.connect(lambda _: self._update_preview())
         g_col.addWidget(self.grade_combo)
         gp_row.addLayout(g_col)
         p_col = QVBoxLayout()
@@ -1628,8 +1675,9 @@ class DesktopApp(QMainWindow):
         p_label.setProperty("class", "muted")
         p_col.addWidget(p_label)
         self.period_combo = QComboBox()
-        self.period_combo.addItems(["P1", "P2", "P3", "P4"])
-        self.period_combo.setCurrentText("P3")
+        self.period_combo.addItems(["Seleccionar...", "P1", "P2", "P3", "P4"])
+        self.period_combo.setCurrentIndex(0)
+        self.period_combo.currentIndexChanged.connect(lambda _: self._update_preview())
         p_col.addWidget(self.period_combo)
         gp_row.addLayout(p_col)
         sidebar_layout.addLayout(gp_row)
@@ -1820,6 +1868,7 @@ class DesktopApp(QMainWindow):
         self.files_lb = ReorderableList()
         self.files_lb.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.files_lb.reordered.connect(self._on_files_reordered)
+        self.files_lb.filesDropped.connect(self._add_files_from_paths)
         col3_layout.addWidget(self.files_lb)
 
         workspace.addWidget(col3)
@@ -2120,9 +2169,14 @@ class DesktopApp(QMainWindow):
     # ─── export / import ───────────────────────────────────────
 
     def _export_config(self):
+        g_name = self.grade_combo.currentText()
+        p_name = self.period_combo.currentText()
+        g_str = "ESQUEMA" if g_name.startswith("Seleccionar") else g_name
+        p_str = "BASE" if p_name.startswith("Seleccionar") else p_name
+        default_fn = f"CONFIG_{g_str}_{p_str}_{self.sessions[0]['year'] if self.sessions else '2026'}.json"
         path, _ = QFileDialog.getSaveFileName(
             self, "Guardar configuraci\u00f3n",
-            f"CONFIG_{self.grade_combo.currentText()}_{self.period_combo.currentText()}_{self.sessions[0]['year'] if self.sessions else '2026'}.json",
+            default_fn,
             "JSON (*.json)")
         if not path:
             return
@@ -2137,7 +2191,7 @@ class DesktopApp(QMainWindow):
         self.template_path = ""
         self.output_dir = ""
         self.grade = ""
-        self.period = "P3"
+        self.period = ""
         self.name_template = "E.S.A._{grade}_{period}_{session}_{year}"
         self.title_template = "Evaluaciones de Suficiencia Acad\u00e9mica - {grade} - {period} - {session} - {year}"
 
@@ -2149,8 +2203,10 @@ class DesktopApp(QMainWindow):
             self.name_template_entry.setText(self.name_template)
         if hasattr(self, "title_template_entry"):
             self.title_template_entry.setText(self.title_template)
+        if hasattr(self, "grade_combo"):
+            self.grade_combo.setCurrentIndex(0)
         if hasattr(self, "period_combo"):
-            self.period_combo.setCurrentText("P3")
+            self.period_combo.setCurrentIndex(0)
 
         qd = QDate.currentDate()
         self.sessions = [{
@@ -2197,6 +2253,14 @@ class DesktopApp(QMainWindow):
 
     def _generate_all(self):
         if self.processing:
+            return
+        g_val = self.grade_combo.currentText()
+        p_val = self.period_combo.currentText()
+        if not g_val or g_val.startswith("Seleccionar"):
+            self._show_warning("Grado no seleccionado", "Por favor selecciona un Grado antes de generar.")
+            return
+        if not p_val or p_val.startswith("Seleccionar"):
+            self._show_warning("Periodo no seleccionado", "Por favor selecciona un Periodo antes de generar.")
             return
         if not self.sessions:
             self._show_warning("Sin datos", "No hay sesiones configuradas.")

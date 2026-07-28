@@ -2,113 +2,114 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-title GESA - Gestor de Evaluaciones de Suficiencia Academica
+title GESA - Gestor de Evaluaciones de Suficiencia Académica
 
 set "PYTHON_URL=https://www.python.org/ftp/python/3.12.9/python-3.12.9-amd64.exe"
 set "PYTHON_INSTALLER=%~dp0python_installer.exe"
 set "REQUIREMENTS=%~dp0requirements.txt"
 set "APP=%~dp0desktop_app.py"
 
-cls
-echo.
-echo ========================================
-echo   GESTOR DE EVALUACIONES DE
-echo   SUFICIENCIA ACADEMICA
-echo ========================================
-echo v1.0 ^| Generacion automatica de examenes
-echo.
-
-echo [1/6] Comprobando actualizaciones desde GitHub...
-git --version >nul 2>&1
+rem ── 1. RUTA RÁPIDA: Si Python y las dependencias ya están listas, iniciar de inmediato (< 1s) ──
+python -c "import PyQt6, docx, win32com" >nul 2>&1
 if not errorlevel 1 (
-    if exist "%~dp0.git" (
-        git pull origin main --quiet 2>nul
-        echo [OK] Codigo sincronizado con GitHub
-    ) else (
-        echo [OK] Inicio directo
-    )
-) else (
-    echo [OK] Inicio directo
+    pythonw "%APP%" >nul 2>&1
+    if not errorlevel 1 exit /b 0
+    python "%APP%"
+    exit /b 0
 )
 
+py -3 -c "import PyQt6, docx, win32com" >nul 2>&1
+if not errorlevel 1 (
+    py -3 "%APP%"
+    exit /b 0
+)
+
+rem ── 2. CONFIGURACIÓN INICIAL / INSTALACIÓN (solo si falta algún componente) ──
+cls
+echo =======================================================
+echo    GESA - Gestor de Evaluaciones de Suficiencia
+echo =======================================================
 echo.
-echo [2/6] Verificando Python...
+
+echo [1/3] Verificando entorno Python...
+
+set "PY_CMD="
 python --version >nul 2>&1
 if not errorlevel 1 (
-    echo [OK] Python detectado
-    goto step2
+    set "PY_CMD=python"
+) else (
+    py -3 --version >nul 2>&1
+    if not errorlevel 1 (
+        set "PY_CMD=py -3"
+    ) else (
+        if exist "%LocalAppData%\Programs\Python\Python312\python.exe" (
+            set "PATH=%LocalAppData%\Programs\Python\Python312;%LocalAppData%\Programs\Python\Python312\Scripts;%PATH%"
+            set "PY_CMD=python"
+        )
+    )
 )
 
-echo [!] Python 3.10+ no encontrado
+if defined PY_CMD (
+    echo [OK] Python detectado correctamente.
+    goto install_deps
+)
+
 echo.
-echo Descargando Python (64-bit)...
-powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('%PYTHON_URL%', '%PYTHON_INSTALLER%')}"
+echo [!] Python 3 no se encuentra instalado en este equipo.
+echo [>] Descargando e instalando Python 3.12 automaticamente (proceso de unica vez)...
+echo.
+
+powershell -Command "Write-Host 'Descargando instalador de Python...'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object Net.WebClient).DownloadFile('%PYTHON_URL%', '%PYTHON_INSTALLER%')"
+
 if not exist "%PYTHON_INSTALLER%" (
-    echo [FAIL] No se pudo descargar Python.
+    echo.
+    echo [ERROR] No se pudo descargar el instalador de Python.
+    echo Por favor verifica tu conexion a Internet e intenta nuevamente.
     pause
     exit /b 1
 )
-echo Instalando Python (espera unos segundos)...
-start /wait "" "%PYTHON_INSTALLER%" /quiet InstallAllUsers=1 PrependPath=1 Include_test=0 Include_launcher=0
+
+echo [>] Instalando Python 3.12 (espera unos segundos)...
+start /wait "" "%PYTHON_INSTALLER%" /quiet InstallAllUsers=0 PrependPath=1 Include_test=0 Include_launcher=1 SimpleInstall=1
 del "%PYTHON_INSTALLER%" 2>nul
-echo [OK] Python instalado.
-echo.
-echo IMPORTANTE: Cierra y abre el programa de nuevo para que los cambios tengan efecto.
-pause
-exit /b 0
 
-:step2
-echo.
-echo [3/6] Actualizando pip...
-python -m pip install --upgrade pip -q
-echo [OK] pip actualizado
+set "PATH=%LocalAppData%\Programs\Python\Python312;%LocalAppData%\Programs\Python\Python312\Scripts;%PATH%"
 
-echo.
-echo [4/6] Instalando dependencias...
-python -c "import win32com.client" 2>nul
+python --version >nul 2>&1
 if errorlevel 1 (
-    python -m pip install pywin32 -q
-    python Scripts\pywin32_postinstall.py -install 2>nul
-    echo pywin32 instalado
-)
-python -m pip install -r "%REQUIREMENTS%" -q
-echo [OK] Paquetes listos
-
-echo.
-echo [5/6] Verificando Microsoft Word y registrando accesos directos...
-reg query "HKLM\SOFTWARE\Microsoft\Office" 2>nul >nul
-if not errorlevel 1 (
-    echo [OK] Microsoft Word detectado
-) else (
-    reg query "HKCU\SOFTWARE\Microsoft\Office" 2>nul >nul
+    py -3 --version >nul 2>&1
     if not errorlevel 1 (
-        echo [OK] Microsoft Word detectado
+        set "PY_CMD=py -3"
     ) else (
-        echo [!] No se detecto Microsoft Word
-        echo La generacion de examenes requiere Word.
+        echo [ERROR] No se pudo activar Python automaticamente. Reinicia la aplicacion.
+        pause
+        exit /b 1
     )
-)
-
-powershell -ExecutionPolicy Bypass -File "%~dp0create_shortcut.ps1" >nul 2>&1
-echo [OK] Acceso directo registrado en Menu Inicio y Escritorio (Buscalo como 'GESA' en Inicio)
-
-echo.
-echo [6/6] Arrancando aplicacion...
-echo.
-echo ========================================
-echo        TODO LISTO
-echo ========================================
-echo.
-
-pythonw --version >nul 2>&1
-if not errorlevel 1 (
-    pythonw "%APP%"
 ) else (
-    python "%APP%"
+    set "PY_CMD=python"
 )
+
+echo [OK] Python instalado y configurado correctamente.
+
+:install_deps
+echo.
+echo [2/3] Instalando librerias necesarias (PyQt6, python-docx, pywin32)...
+!PY_CMD! -m pip install -r "%REQUIREMENTS%" --quiet --no-warn-script-location
+!PY_CMD! -c "import win32com.client" 2>nul
 if errorlevel 1 (
-    echo.
-    echo [FAIL] La aplicacion se cerro con error
-    pause
+    !PY_CMD! -m pip install pywin32 --quiet --no-warn-script-location
 )
+
+echo [OK] Librerias instaladas.
+
+echo.
+echo [3/3] Registrando accesos directos...
+powershell -ExecutionPolicy Bypass -File "%~dp0create_shortcut.ps1" >nul 2>&1
+
+echo.
+echo [>] Iniciando GESA...
+echo.
+
+!PY_CMD! "%APP%"
+
 endlocal
