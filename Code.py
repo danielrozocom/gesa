@@ -600,6 +600,7 @@ def inject_list_definitions(doc, start_number=1):
                     <w:lvlJc w:val="left"/>
                     <w:suff w:val="space"/>
                     <w:pPr>
+                        <w:spacing w:before="0" w:after="0"/>
                         <w:ind w:left="360" w:hanging="360"/>
                     </w:pPr>
                     <w:rPr>
@@ -623,6 +624,7 @@ def inject_list_definitions(doc, start_number=1):
                     <w:lvlJc w:val="left"/>
                     <w:suff w:val="space"/>
                     <w:pPr>
+                        <w:spacing w:before="0" w:after="0"/>
                         <w:ind w:left="360" w:hanging="360"/>
                     </w:pPr>
                     <w:rPr>
@@ -760,11 +762,22 @@ def apply_formatting_to_document(doc):
         set_single_line_spacing(para)
         strip_leading_tabs(para)
         
+        # If paragraph is empty (a line break / empty spacing line), ensure it has a run with 11pt font so height is uniform
+        if not para.runs and not _has_drawing(p_elem):
+            _add_styled_run(para, "", bold=False, size_pt=11, font_name=font_name)
+        
         # Format all runs with Century Gothic 11pt
         for r_elem in p_elem.xpath('.//w:r'):
             run = Run(r_elem, para)
             run.font.name = font_name
             run.font.size = font_size
+            # Clear explicit run-level font size overrides if present
+            rPr = r_elem.find(qn('w:rPr'))
+            if rPr is not None:
+                for sz_tag in ['w:sz', 'w:szCs']:
+                    sz_elem = rPr.find(qn(sz_tag))
+                    if sz_elem is not None:
+                        sz_elem.set(qn('w:val'), '22')  # 22 half-pts = 11pt
 
 
 def _safe_remove_para(p):
