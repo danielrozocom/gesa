@@ -441,6 +441,8 @@ def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="C
                 label = "Componente"
         
         content = _normalize_case(m.group(2).strip())
+        if content and not content.endswith(('.', ':', ';', '!', '?')):
+            content += '.'
         _remove_tabs_from_pPr(p)
         remove_indents(p)
         set_single_line_spacing(p)
@@ -765,19 +767,39 @@ def apply_formatting_to_document(doc):
         # If paragraph is empty (a line break / empty spacing line), ensure it has a run with 11pt font so height is uniform
         if not para.runs and not _has_drawing(p_elem):
             _add_styled_run(para, "", bold=False, size_pt=11, font_name=font_name)
+
+    # Format all runs in the entire document XML (including text boxes, shapes, tables, etc.)
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    for r_elem in doc.element.xpath('.//w:r'):
+        rPr = r_elem.find(f'{{{wns}}}rPr')
+        if rPr is None:
+            rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
+            r_elem.insert(0, rPr)
         
-        # Format all runs with Century Gothic 11pt
-        for r_elem in p_elem.xpath('.//w:r'):
-            run = Run(r_elem, para)
-            run.font.name = font_name
-            run.font.size = font_size
-            # Clear explicit run-level font size overrides if present
-            rPr = r_elem.find(qn('w:rPr'))
-            if rPr is not None:
-                for sz_tag in ['w:sz', 'w:szCs']:
-                    sz_elem = rPr.find(qn(sz_tag))
-                    if sz_elem is not None:
-                        sz_elem.set(qn('w:val'), '22')  # 22 half-pts = 11pt
+        # Set font name
+        rFonts = rPr.find(f'{{{wns}}}rFonts')
+        if rFonts is None:
+            rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
+            rPr.append(rFonts)
+        else:
+            rFonts.set(qn('w:ascii'), font_name)
+            rFonts.set(qn('w:hAnsi'), font_name)
+            rFonts.set(qn('w:cs'), font_name)
+            
+        # Set font size to 11pt (22 in half-points)
+        sz = rPr.find(f'{{{wns}}}sz')
+        if sz is None:
+            sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="22"/>')
+            rPr.append(sz)
+        else:
+            sz.set(qn('w:val'), '22')
+            
+        szCs = rPr.find(f'{{{wns}}}szCs')
+        if szCs is None:
+            szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="22"/>')
+            rPr.append(szCs)
+        else:
+            szCs.set(qn('w:val'), '22')
 
 
 def _safe_remove_para(p):
