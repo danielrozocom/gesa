@@ -1153,6 +1153,7 @@ class DesktopApp(QMainWindow):
         period = self.period_combo.currentText() if hasattr(self, "period_combo") else "P3"
         session_name = s["name"] if s else "Sesi\u00f3n 1"
         target_sub_name = sub_name if sub_name else (sub["name"] if sub else "Subsesi\u00f3n 1.1")
+        sub_code = target_sub_name.replace("Subsesi\u00f3n ", "S").replace("Subsesion ", "S")
         year = s["year"] if s else "2026"
         day = s["day"] if s else "15"
         month = s["month"] if s else "SEP"
@@ -1160,7 +1161,7 @@ class DesktopApp(QMainWindow):
         ctx = {
             "grade": grade,
             "period": period,
-            "session": target_sub_name,
+            "session": sub_code,
             "year": year,
             "level": level,
             "day": day,
