@@ -782,17 +782,18 @@ def replace_in_all(tpl, replacements_map):
 # ── MAIN MERGE ───────────────────────────────────────────────
 
 def merge_docx_with_guaranteed_header(template_path, file_list, output_path, config_data, start_offset=0):
+    grade_val = config_data.get('grade_display', config_data.get('p_c_value', config_data.get('grade_clean', '')))
     replacements_map = {
-        "(EDU_LEVEL)": config_data['level'].upper(),
-        "(GRADE)": config_data['grade_clean'].upper(),
-        "(TERM)": config_data['period'].upper(),
-        "(SESSION)": config_data['session_code'].upper(),
-        "(DATE)": config_data['date'].upper(),
-        "(P_C)": config_data['p_c_value'],
+        "(EDU_LEVEL)": str(config_data['level']).upper(),
+        "(GRADE)": str(grade_val).upper(),
+        "(TERM)": str(config_data['period']).upper(),
+        "(SESSION)": str(config_data['session_code']).upper(),
+        "(DATE)": str(config_data['date']).upper(),
+        "(P_C)": str(grade_val),
     }
 
     title_context = {k: config_data.get(k, '') for k in ['grade_clean', 'period', 'session_code', 'year', 'level']}
-    title_context['grade'] = title_context['grade_clean']
+    title_context['grade'] = config_data.get('grade', title_context['grade_clean'])
     title_context['session'] = title_context['session_code']
     title_template = config_data.get('title_template', '')
     if not title_template:

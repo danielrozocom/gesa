@@ -820,14 +820,25 @@ class GenerateWorker(QObject):
             }
             filename = expand_template(self.name_template, name_context) + ".docx"
 
+            clean_num = self.grade.replace("\u00b0", "").strip()
+            if grade_info["multicourse"]:
+                if clean_num in ("10", "11"):
+                    grade_display = f"{clean_num}-___"
+                else:
+                    grade_display = f"{clean_num}0___"
+            else:
+                grade_display = self.grade
+
             config = {
                 "level": grade_info["level"],
-                "grade_clean": self.grade,
+                "grade": self.grade,
+                "grade_clean": grade_display,
+                "grade_display": grade_display,
                 "period": self.period,
                 "session_code": sub_code,
                 "date": fecha,
                 "year": s["year"],
-                "p_c_value": f"{clean_grade}-" if grade_info["multicourse"] else self.grade,
+                "p_c_value": grade_display,
                 "title_template": self.title_template,
             }
             out = filename
@@ -2274,6 +2285,24 @@ class DesktopApp(QMainWindow):
         if total_files == 0:
             self._show_warning("Sin archivos", "Agrega archivos a las subsesiones.")
             return
+
+        empty_subs = [
+            f"{s['name']} \u2794 {sub['name']}"
+            for s in self.sessions for sub in s["subsessions"]
+            if not sub["files"]
+        ]
+        if empty_subs:
+            preview_subs = "\n".join(f"  \u2022 {name}" for name in empty_subs[:6])
+            if len(empty_subs) > 6:
+                preview_subs += f"\n  ...y {len(empty_subs) - 6} subsesi\u00f3n(es) m\u00e1s"
+            
+            msg = (
+                f"Se detectaron {len(empty_subs)} subsesi\u00f3n(es) sin archivos asignados:\n\n"
+                f"{preview_subs}\n\n"
+                "\u00bfDeseas omitir este aviso y continuar con la generaci\u00f3n de las dem\u00e1s subsesiones?"
+            )
+            if not self._ask_yes_no("Subsesiones sin archivos", msg):
+                return
 
         self.processing = True
         self._stop_requested = False
