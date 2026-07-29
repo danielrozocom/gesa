@@ -752,8 +752,9 @@ QTextEdit {{
     border: 1px solid {c["border"]};
     border-radius: 8px;
     font-family: "Consolas";
-    font-size: 10px;
+    font-size: 13px;
     padding: 8px;
+    line-height: 140%;
     selection-background-color: {c["blue"]};
     selection-color: #ffffff;
 }}
@@ -962,14 +963,17 @@ class GenerateWorker(QObject):
                 )
                 if self.stop_requested:
                     results.append(("stopped", "Proceso detenido por el usuario."))
+                    self.log_message.emit("🛑 Proceso detenido por el usuario.")
                     break
                 cur_offset = last_num
                 results.append(("ok", out))
+                self.log_message.emit(f"✅ {out}")
             except Exception as e:
                 if self.stop_requested:
                     results.append(("stopped", "Proceso detenido por el usuario."))
                 else:
                     results.append(("error", f"{out}: {e}"))
+                    self.log_message.emit(f"❌ {out}: {e}")
                 break
 
             completed_tasks += 1
@@ -2329,7 +2333,7 @@ class DesktopApp(QMainWindow):
             self._log(f"Carpeta de salida: {path}")
 
     def _log(self, text):
-        self.log.append(f"[{threading.current_thread().name}] {text}")
+        self.log.append(text)
 
     def _config_dict(self):
         return {
@@ -2687,7 +2691,8 @@ class DesktopApp(QMainWindow):
                 border-radius: 6px;
                 font-weight: 700;
                 font-size: 13px;
-                min-height: 40px;
+                padding: 8px 20px;
+                min-height: 24px;
             }
             QPushButton:hover {
                 background-color: #ef4444;
@@ -2728,17 +2733,19 @@ class DesktopApp(QMainWindow):
     def _on_generation_finished(self, data):
         self.processing = False
 
+        # Beep to notify the user that the process ended
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_OK)
+        except Exception:
+            try:
+                print('\a', end='', flush=True)
+            except Exception:
+                pass
+
         ok = sum(1 for k, _ in data if k == "ok")
         err = sum(1 for k, _ in data if k == "error")
         was_stopped = any(k == "stopped" for k, _ in data)
-
-        for k, msg in data:
-            if k == "ok":
-                self._log(f"\u2705 {msg}")
-            elif k == "error":
-                self._log(f"\u274c {msg}")
-            elif k == "stopped":
-                self._log(f"\U0001f6d1 {msg}")
 
         if was_stopped:
             self.status.setText("Detenido")
@@ -2752,6 +2759,7 @@ class DesktopApp(QMainWindow):
             doc_word = "documento" if ok == 1 else "documentos"
             gen_word = "generado" if ok == 1 else "generados"
             self._show_info("Completado", f"{ok} {doc_word} {gen_word} correctamente.")
+            self._log(f"✅ Finalizado correctamente — {ok} {doc_word} {gen_word}.")
         else:
             self.status.setText(f"Errores ({err})")
             self._set_status_color("#ef4444")

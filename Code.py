@@ -515,7 +515,7 @@ def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="C
             p2_xml = parse_xml(f'<w:p {nsdecls("w")}/>')
             p_elem.addnext(p2_xml)
             from docx.text.paragraph import Paragraph
-            p2_obj = Paragraph(p2_xml, p._composite)
+            p2_obj = Paragraph(p2_xml, p._parent)
             lang2 = force_lang or ("en" if 'component' in c2_label.lower() else "es")
             lbl2 = "Component" if lang2 == "en" else "Componente"
             val2 = _normalize_case(c2_val)
@@ -827,8 +827,14 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
             numPr = pPr.find(qn('w:numPr'))
             if numPr is not None:
                 pPr.remove(numPr)
+            ind = pPr.find(qn('w:ind'))
+            if ind is not None:
+                pPr.remove(ind)
             numPr = parse_xml(f'<w:numPr {nsdecls("w")}><w:ilvl w:val="0"/><w:numId w:val="{o_num_id}"/></w:numPr>')
             pPr.append(numPr)
+            ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="360"/>')
+            pPr.append(ind_elem)
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             strip_leading_tabs(p)
             _ensure_ends_with_period(p)
             continue
@@ -841,8 +847,14 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
             numPr = pPr.find(qn('w:numPr'))
             if numPr is not None:
                 pPr.remove(numPr)
+            ind = pPr.find(qn('w:ind'))
+            if ind is not None:
+                pPr.remove(ind)
             numPr = parse_xml(f'<w:numPr {nsdecls("w")}><w:ilvl w:val="0"/><w:numId w:val="{q_num_id}"/></w:numPr>')
             pPr.append(numPr)
+            ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="360"/>')
+            pPr.append(ind_elem)
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             strip_leading_tabs(p)
             
             # Restart options for this question
@@ -906,6 +918,11 @@ def apply_formatting_to_document(doc):
             rFonts.set(qn('w:ascii'), font_name)
             rFonts.set(qn('w:hAnsi'), font_name)
             rFonts.set(qn('w:cs'), font_name)
+            # Strip theme font attributes — Word COM injects these and they
+            # can override the explicit font on some Word versions
+            for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
+                if qn(theme_attr) in rFonts.attrib:
+                    del rFonts.attrib[qn(theme_attr)]
             
         # Set font size to 11pt (22 in half-points)
         sz = rPr.find(f'{{{wns}}}sz')
@@ -940,6 +957,9 @@ def apply_formatting_to_document(doc):
                     rFonts.set(qn('w:ascii'), font_name)
                     rFonts.set(qn('w:hAnsi'), font_name)
                     rFonts.set(qn('w:cs'), font_name)
+                    for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
+                        if qn(theme_attr) in rFonts.attrib:
+                            del rFonts.attrib[qn(theme_attr)]
                     
                 sz = rPr.find(f'{{{wns}}}sz')
                 if sz is None:
@@ -1435,17 +1455,93 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
     for sec in tpl.sections:
         force_single_column(sec)
 
-    # No sentinel needed — post-merge forces Century Gothic on the entire document.
+    _SENTINEL_TEXT = "GESABOUNDARY"
+    sentinel_p = parse_xml(
+        f'<w:p {nsdecls("w")}><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="2"/><w:szCs w:val="2"/><w:color w:val="FFFFFF"/></w:rPr><w:t xml:space="preserve">{_SENTINEL_TEXT}</w:t></w:r></w:p>'
+    )
+    tpl.element.body.append(sentinel_p)
 
     prepped = os.path.join(tmp_dir, 'template_prepped.docx')
     tpl.save(prepped)
 
     merged_path = os.path.join(tmp_dir, 'word_merged.docx')
-    used_word_com = False
 
-    # ── Attempt 1: python-docx merge (preserves subdoc Century Gothic
-    #    from pre-processing, does NOT touch template font) ──────
+    # ── Attempt: Word COM ──────────────────────────────────────
+    # (original approach from v1.0 — InsertFile, then
+    #  apply_formatting_to_document re‑applies Century Gothic)
+    import win32com.client as win32
+    word = None
+    doc = None
     try:
+        word = win32.DispatchEx('Word.Application')
+        word.Visible = False
+        word.DisplayAlerts = False
+        time.sleep(0.3)
+
+        doc = word.Documents.Open(
+            os.path.abspath(prepped),
+            ConfirmConversions=False, ReadOnly=False,
+            AddToRecentFiles=False)
+        time.sleep(0.2)
+
+        for i, tp in enumerate(temp_subs):
+            rng = doc.Range()
+            rng.Collapse(0)
+            rng.InsertFile(os.path.abspath(tp), ConfirmConversions=False)
+            if i < len(temp_subs) - 1:
+                rng = doc.Range()
+                rng.Collapse(0)
+                rng.InsertBreak(2)
+
+        for s_idx in range(1, doc.Sections.Count + 1):
+            try:
+                doc.Sections(s_idx).PageSetup.TextColumns.SetCount(1)
+            except:
+                pass
+
+        try:
+            doc.Content.Find.ClearFormatting()
+            for k, v in replacements_map.items():
+                doc.Content.Find.Execute(FindText=k, ReplaceWith=str(v), Replace=2)
+        except:
+            pass
+        for i in range(1, doc.Shapes.Count + 1):
+            try:
+                shape = doc.Shapes.Item(i)
+                if shape.Type == 6:
+                    for j in range(1, shape.GroupItems.Count + 1):
+                        try:
+                            gi = shape.GroupItems.Item(j)
+                            if gi.TextFrame.HasText:
+                                gi.TextFrame.TextRange.Find.ClearFormatting()
+                                for k, v in replacements_map.items():
+                                    gi.TextFrame.TextRange.Find.Execute(
+                                        FindText=k, ReplaceWith=str(v), Replace=2)
+                        except:
+                            pass
+                elif shape.TextFrame.HasText:
+                    shape.TextFrame.TextRange.Find.ClearFormatting()
+                    for k, v in replacements_map.items():
+                        shape.TextFrame.TextRange.Find.Execute(
+                            FindText=k, ReplaceWith=str(v), Replace=2)
+            except:
+                pass
+
+        doc.SaveAs2(os.path.abspath(merged_path), AddToRecentFiles=False)
+        doc.Close(False); doc = None
+        word.Quit(); word = None
+    except Exception:
+        if doc is not None:
+            try: doc.Close(False)
+            except: pass
+        if word is not None:
+            try: word.Quit()
+            except: pass
+        doc = None
+        word = None
+
+    # ── Fallback: python-docx merge if COM unavailable ─────────
+    if not os.path.exists(merged_path):
         if stop_check is not None and stop_check():
             raise RuntimeError("Cancelado por el usuario.")
         final_doc = Document(prepped)
@@ -1455,90 +1551,6 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
             sub_doc = Document(tp)
             _merge_docx_with_rels(final_doc, sub_doc, add_break=(i < len(temp_subs) - 1))
         final_doc.save(merged_path)
-    except Exception:
-        if os.path.exists(merged_path):
-            try: os.remove(merged_path)
-            except: pass
-        # Fall through to Word COM
-
-    if not os.path.exists(merged_path):
-        # ── Attempt 2: Word COM (may strip formatting, so post‑process
-        #    must re‑apply everything) ────────────────────────────
-        import win32com.client as win32
-        word = None
-        doc = None
-        try:
-            word = win32.DispatchEx('Word.Application')
-            word.Visible = False
-            word.DisplayAlerts = False
-            time.sleep(0.3)
-
-            doc = word.Documents.Open(
-                os.path.abspath(prepped),
-                ConfirmConversions=False, ReadOnly=False,
-                AddToRecentFiles=False)
-            time.sleep(0.2)
-
-            for i, tp in enumerate(temp_subs):
-                rng = doc.Range()
-                rng.Collapse(0)
-                rng.InsertFile(os.path.abspath(tp), ConfirmConversions=False)
-                if i < len(temp_subs) - 1:
-                    rng = doc.Range()
-                    rng.Collapse(0)
-                    rng.InsertBreak(2)
-
-            for s_idx in range(1, doc.Sections.Count + 1):
-                try:
-                    doc.Sections(s_idx).PageSetup.TextColumns.SetCount(1)
-                except:
-                    pass
-
-            try:
-                doc.Content.Find.ClearFormatting()
-                for k, v in replacements_map.items():
-                    doc.Content.Find.Execute(FindText=k, ReplaceWith=str(v), Replace=2)
-            except:
-                pass
-            for i in range(1, doc.Shapes.Count + 1):
-                try:
-                    shape = doc.Shapes.Item(i)
-                    if shape.Type == 6:
-                        for j in range(1, shape.GroupItems.Count + 1):
-                            try:
-                                gi = shape.GroupItems.Item(j)
-                                if gi.TextFrame.HasText:
-                                    gi.TextFrame.TextRange.Find.ClearFormatting()
-                                    for k, v in replacements_map.items():
-                                        gi.TextFrame.TextRange.Find.Execute(
-                                            FindText=k, ReplaceWith=str(v), Replace=2)
-                            except:
-                                pass
-                    elif shape.TextFrame.HasText:
-                        shape.TextFrame.TextRange.Find.ClearFormatting()
-                        for k, v in replacements_map.items():
-                            shape.TextFrame.TextRange.Find.Execute(
-                                FindText=k, ReplaceWith=str(v), Replace=2)
-                except:
-                    pass
-
-            doc.SaveAs2(os.path.abspath(merged_path), AddToRecentFiles=False)
-            doc.Close(False); doc = None
-            word.Quit(); word = None
-            used_word_com = True
-        except Exception:
-            if doc is not None:
-                try: doc.Close(False)
-                except: pass
-            if word is not None:
-                try: word.Quit()
-                except: pass
-            doc = None
-            word = None
-            raise RuntimeError("No se pudo fusionar con Word ni con python-docx.")
-
-    if not os.path.exists(merged_path):
-        raise RuntimeError("El documento fusionado no se creó.")
 
     # ── Post-process (python-docx) ──────────────────────────────
     final = Document(merged_path)
@@ -1564,13 +1576,11 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         sec.footer.is_linked_to_previous = False
         setup_footer_page_number(sec.footer, doc=final)
 
-    # ── Force Century Gothic 11pt on footers + headers (always) ──
-    # Body is already correct when python-docx did the merge (subdocs
-    # formatted in pre‑processing, template font untouched).  When Word
-    # COM was used its InsertFile may have stripped formatting, so the
-    # body gets re‑applied as well.
+    # ── Force Century Gothic 11pt on subdoc content (after sentinel) ──
+    # The template body content (before the sentinel) keeps its original font.
     wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
     font_name = "Century Gothic"
+    _SENTINEL_TEXT = "GESABOUNDARY"
 
     def _force_run_font(r_elem):
         rPr = r_elem.find(f'{{{wns}}}rPr')
@@ -1601,37 +1611,86 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         else:
             szCs.set(qn('w:val'), '22')
 
-    # Footers (pagination) — always Century Gothic 11pt
-    for sec in final.sections:
-        if sec.footer is not None:
-            for r_elem in sec.footer._element.xpath('.//w:r', namespaces={'w': wns}):
-                _force_run_font(r_elem)
+    # Locate sentinel by text content
+    body_children = list(final.element.body)
+    sentinel_idx = None
+    for idx_c, child in enumerate(body_children):
+        if child.tag.endswith('}p') or child.tag == 'p':
+            for t in child.xpath('.//w:t'):
+                if _SENTINEL_TEXT in (t.text or ''):
+                    sentinel_idx = idx_c
+                    break
+        if sentinel_idx is not None:
+            break
 
-    # Headers — always Century Gothic 11pt
+    if sentinel_idx is not None:
+        try:
+            body_children[sentinel_idx].getparent().remove(body_children[sentinel_idx])
+        except Exception:
+            pass
+        body_children = list(final.element.body)
+        subdoc_elems = body_children[sentinel_idx:]
+    else:
+        subdoc_elems = []
+
+    from docx.text.paragraph import Paragraph as _Paragraph
+    for elem in subdoc_elems:
+        if elem.tag.endswith('}p') or elem.tag == 'p':
+            para = _Paragraph(elem, final)
+            text = para.text.strip()
+            is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]', text, re.IGNORECASE))
+            is_q_or_opt = bool(re.match(r'^(\s*[\(\[\{]?(\d+|[a-eA-E])\s*[\.\)\]\}\-\:\/])', text))
+            if not _has_drawing(elem):
+                para.alignment = WD_ALIGN_PARAGRAPH.LEFT if (is_comp or is_q_or_opt) else WD_ALIGN_PARAGRAPH.JUSTIFY
+        for r_elem in elem.xpath('.//w:r'):
+            _force_run_font(r_elem)
+
+    # Numbering definitions — force Century Gothic + strip theme attrs
+    try:
+        if hasattr(final.part, 'numbering_part') and final.part.numbering_part is not None:
+            num_xml = final.part.numbering_part.element
+            for lvl in num_xml.xpath('.//w:lvl'):
+                lvl_rPr = lvl.find(f'{{{wns}}}rPr')
+                if lvl_rPr is None:
+                    lvl_rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
+                    lvl.append(lvl_rPr)
+                rFonts = lvl_rPr.find(f'{{{wns}}}rFonts')
+                if rFonts is None:
+                    rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
+                    lvl_rPr.append(rFonts)
+                else:
+                    rFonts.set(qn('w:ascii'), font_name)
+                    rFonts.set(qn('w:hAnsi'), font_name)
+                    rFonts.set(qn('w:cs'), font_name)
+                    for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
+                        if qn(theme_attr) in rFonts.attrib:
+                            del rFonts.attrib[qn(theme_attr)]
+                sz = lvl_rPr.find(f'{{{wns}}}sz')
+                if sz is None:
+                    sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="22"/>')
+                    lvl_rPr.append(sz)
+                else:
+                    sz.set(qn('w:val'), '22')
+                szCs = lvl_rPr.find(f'{{{wns}}}szCs')
+                if szCs is None:
+                    szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="22"/>')
+                    lvl_rPr.append(szCs)
+                else:
+                    szCs.set(qn('w:val'), '22')
+    except Exception:
+        pass
+
+    # Headers — force Century Gothic 11pt
     for sec in final.sections:
         for hdr in (sec.header, sec.first_page_header):
             if hdr is not None:
-                for r_elem in hdr._element.xpath('.//w:r', namespaces={'w': wns}):
+                for r_elem in hdr._element.xpath('.//w:r'):
                     _force_run_font(r_elem)
 
-    # Body — only re‑apply when Word COM was used (it strips formatting)
-    if used_word_com:
-        from docx.text.paragraph import Paragraph as _Paragraph
-        for elem in list(final.element.body):
-            if elem.tag.endswith('}p') or elem.tag == 'p':
-                para = _Paragraph(elem, final)
-                text = para.text.strip()
-                is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]', text, re.IGNORECASE))
-                if not _has_drawing(elem):
-                    para.alignment = WD_ALIGN_PARAGRAPH.LEFT if is_comp else WD_ALIGN_PARAGRAPH.JUSTIFY
-            for r_elem in elem.xpath('.//w:r', namespaces={'w': wns}):
-                _force_run_font(r_elem)
-
-    # Footer page numbers — always Century Gothic 11pt (set by setup_footer_page_number,
-    # but re-apply here defensively in case Word COM stripped them)
+    # Footer pagination — force Century Gothic 11pt
     for sec in final.sections:
         if sec.footer is not None:
-            for r_elem in sec.footer._element.xpath('.//w:r', namespaces={'w': wns}):
+            for r_elem in sec.footer._element.xpath('.//w:r'):
                 _force_run_font(r_elem)
 
     # Apply native numbering to the fully merged document
