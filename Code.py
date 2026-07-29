@@ -485,6 +485,18 @@ def _ensure_ends_with_period(paragraph):
             paragraph.add_run('.')
 
 
+BULLET_CHARS_RE = re.compile(r'^\s*[\u2022\u25CF\u25A0\u25A1\u25AA\u25AB\uF0B7\u2013\u2014\u00B7\u25A2\u25C6\u25C7\u25E6\u2023\u2043•□▪·–\*]\s*')
+
+def is_bullet_paragraph(paragraph):
+    pPr = paragraph._element.find(qn('w:pPr'))
+    if pPr is not None and pPr.find(qn('w:numPr')) is not None:
+        return True
+    text = paragraph.text.strip()
+    if BULLET_CHARS_RE.match(text):
+        return True
+    return False
+
+
 def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="Century Gothic"):
     raw_text = p.text.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ').strip()
     text = re.sub(r'\s+', ' ', raw_text)
@@ -528,18 +540,16 @@ def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="C
             set_single_line_spacing(p2_obj)
         return True
 
-    m = re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
+    m = re.match(r'^(Competencia|Competence|Componente|Component|Habilidad|Habilidades|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
     if m:
         raw_val = m.group(2).strip()
-        if not raw_val or raw_val.strip(' .:-') == '':
-            _safe_remove_para(p)
-            return True
-
+        if raw_val.lower().strip(' .:-') in ['es', 'en', '']:
+            raw_val = ""
         raw_label = m.group(1).lower()
         if force_lang == 'en':
-            label = "Competence" if ('compet' in raw_label and 'competencia' not in raw_label) or 'competence' in raw_label else "Component"
+            label = "Competence" if ('compet' in raw_label and 'competencia' not in raw_label) or 'competence' in raw_label else ("Component" if 'component' in raw_label else raw_label.capitalize())
         elif force_lang == 'es':
-            label = "Competencia" if ('compet' in raw_label and 'competence' not in raw_label) or 'competencia' in raw_label else "Componente"
+            label = "Competencia" if ('compet' in raw_label and 'competence' not in raw_label) or 'competencia' in raw_label else ("Componente" if 'componente' in raw_label or 'component' in raw_label else raw_label.capitalize())
         else:
             if 'competence' in raw_label:
                 label = "Competence"
@@ -549,19 +559,28 @@ def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="C
                 label = "Competencia"
             elif 'component' in raw_label:
                 label = "Component"
+            elif 'habilidad' in raw_label:
+                label = "Habilidad" if raw_label == 'habilidad' else "Habilidades"
+            elif 'nivel' in raw_label:
+                label = "Nivel"
+            elif 'level' in raw_label:
+                label = "Level"
             else:
-                label = "Componente"
-        
-        content = _normalize_case(raw_val)
-        if content and not content.endswith(('.', ':', ';', '!', '?')):
-            content += '.'
+                label = raw_label.capitalize()
+
         _remove_tabs_from_pPr(p)
         remove_indents(p)
         set_single_line_spacing(p)
         p.text = ""
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        _add_styled_run(p, f"{label}: ", bold=True, size_pt=11, font_name=font_name)
-        _add_styled_run(p, content, bold=False, size_pt=11, font_name=font_name)
+        if raw_val and raw_val.strip(' .:-') != '':
+            content = _normalize_case(raw_val)
+            if content and not content.endswith(('.', ':', ';', '!', '?')):
+                content += '.'
+            _add_styled_run(p, f"{label}: ", bold=True, size_pt=11, font_name=font_name)
+            _add_styled_run(p, content, bold=False, size_pt=11, font_name=font_name)
+        else:
+            _add_styled_run(p, f"{label}:", bold=True, size_pt=11, font_name=font_name)
         return True
     return False
 
@@ -571,21 +590,31 @@ def format_paragraph(paragraph, doc_ref):
     if not text:
         return
 
-    # Strip all indents by default for clean flush-left alignment
-    remove_indents(paragraph)
+    is_bullet = is_bullet_paragraph(paragraph)
+    if not is_bullet:
+        # Strip all indents by default for clean flush-left alignment of normal paragraphs
+        remove_indents(paragraph)
+    else:
+        # For bullet paragraphs, ensure alignment is LEFT and a clean hanging indent exists
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        pPr = paragraph._element.get_or_add_pPr()
+        ind = pPr.find(qn('w:ind'))
+        if ind is None:
+            ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="240"/>')
+            pPr.append(ind_elem)
 
-    # 1. Clean up redundant input document headers and teacher metadata (e.g. EVALUACIÓN BIMESTRAL, EJE TEMÁTICO, INDICADOR DE LOGRO, ESTÁNDAR, CLAVE, etc.)
+    # 1. Clean up redundant input document headers and teacher metadata
     is_redundant_header = (
         re.search(r'(NOMBRE|APELLIDO|ESTUDIANTE|ALUMNO|CURSO|GRADO|FECHA|CÓDIGO|CODIGO|NAME|DATE|CODE)\s*:\s*[_]{2,}', text, re.IGNORECASE) or
         re.search(r'^\s*(EVALUACI[OÓ]N\s+(BIMESTRAL|DIAGN[OÓ]STICA|FINAL|PARCIAL|DE\s+SUFICIENCIA|ACAD[EÉ]MICA|SUMATIVA)|EXAMEN\s+DE|CUESTIONARIO\s+DE|PRUEBA\s+DE)', text, re.IGNORECASE) or
         re.search(r'^\s*(GRADO|CURSO)\s+(SEXTO|S[EÉ]PTIMO|OCTAVO|NOVENO|D[EÉ]CIMO|ONCE|PRIMERO|SEGUNDO|TERCERO|CUARTO|QUINTO|TRANSICI[OÓ]N|JARD[IÍ]N|PREJARD[IÍ]N|\d+[\u00b0°]?)', text, re.IGNORECASE) or
         re.search(r'^\s*(DOCENTE|PROFESOR|PROFESORA|ASIGNATURA|MATERIA)\s*:\s*', text, re.IGNORECASE) or
-        re.search(r'^\s*[\(\[\{]?\s*(EJE\s+TEM[AÁ]TICO|EJE|TEM[AÁ]TICA|TEMA|INDICADOR(\s+DE\s+(LOGRO|DESEMPE[NÑ]O))?|EST[AÁ]NDAR|DESEMPE[NÑ]O|AFIRMACI[OÓ]N|EVIDENCIA|RESPUESTA\s+CORRECTA|CLAVE(\s+DE\s+RESPUESTA)?|NIVEL(\s+DE\s+DIFICULTAD)?)\s*[:\-]\s*', text, re.IGNORECASE)
+        re.search(r'^\s*[\(\[\{]?\s*(EJE\s+TEM[AÁ]TICO|EJE|TEM[AÁ]TICA|TEMA|INDICADOR(\s+DE\s+(LOGRO|DESEMPE[NÑ]O))?|EST[AÁ]NDAR|DESEMPE[NÑ]O|AFIRMACI[OÓ]N|EVIDENCIA|RESPUESTA\s+CORRECTA|CLAVE(\s+DE\s+RESPUESTA)?)\s*[:\-]\s*', text, re.IGNORECASE)
     )
 
     if is_redundant_header:
-        # Don't delete if it's Competencia/Competence/Componente/Component or a Question!
-        if not re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]?\s*', text, re.IGNORECASE) and not re.match(r'^\s*\d+[\.\)]', text):
+        # Don't delete if it's Competencia/Competence/Componente/Component/Habilidad/Nivel or a Question or Bullet!
+        if not re.match(r'^(Competencia|Competence|Componente|Component|Habilidad|Habilidades|Nivel|Level|Desempeño|Aprendizaje|Estándar|Eje)\s*[:\-]?\s*', text, re.IGNORECASE) and not re.match(r'^\s*\d+[\.\)]', text) and not is_bullet:
             if _has_drawing(paragraph._element):
                 for t in paragraph._element.xpath('.//w:t'):
                     t.text = ""
@@ -660,6 +689,12 @@ def set_single_line_spacing(paragraph):
     pf.space_after = Pt(0)
     pf.line_spacing = 1.0
     pPr = paragraph._element.get_or_add_pPr()
+
+    # Remove contextualSpacing if present so Word doesn't alter spacing unpredictably
+    contextual = pPr.find(qn('w:contextualSpacing'))
+    if contextual is not None:
+        pPr.remove(contextual)
+
     sp = pPr.find(qn('w:spacing'))
     if sp is None:
         sp = parse_xml(f'<w:spacing {nsdecls("w")} w:line="240" w:lineRule="auto" w:before="0" w:after="0"/>')
@@ -817,6 +852,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
     paras = get_all_paragraphs(final_doc)
     for p in paras:
         strip_leading_tabs(p)
+        set_single_line_spacing(p)
         text = p.text.strip()
         
         # Check Option
@@ -915,15 +951,15 @@ def apply_formatting_to_document(doc):
             rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
             rPr.append(rFonts)
         else:
-            rFonts.set(qn('w:ascii'), font_name)
-            rFonts.set(qn('w:hAnsi'), font_name)
-            rFonts.set(qn('w:cs'), font_name)
-            # Strip theme font attributes — Word COM injects these and they
-            # can override the explicit font on some Word versions
-            for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
-                if qn(theme_attr) in rFonts.attrib:
-                    del rFonts.attrib[qn(theme_attr)]
-            
+            ascii_f = (rFonts.get(qn('w:ascii')) or '').lower()
+            if not any(sym in ascii_f for sym in ['symbol', 'wingdings', 'webdings', 'marlett']):
+                rFonts.set(qn('w:ascii'), font_name)
+                rFonts.set(qn('w:hAnsi'), font_name)
+                rFonts.set(qn('w:cs'), font_name)
+                for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
+                    if qn(theme_attr) in rFonts.attrib:
+                        del rFonts.attrib[qn(theme_attr)]
+
         # Set font size to 11pt (22 in half-points)
         sz = rPr.find(f'{{{wns}}}sz')
         if sz is None:
@@ -931,7 +967,7 @@ def apply_formatting_to_document(doc):
             rPr.append(sz)
         else:
             sz.set(qn('w:val'), '22')
-            
+
         szCs = rPr.find(f'{{{wns}}}szCs')
         if szCs is None:
             szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="22"/>')
@@ -944,6 +980,9 @@ def apply_formatting_to_document(doc):
         if hasattr(doc.part, 'numbering_part') and doc.part.numbering_part is not None:
             num_xml = doc.part.numbering_part.element
             for lvl in num_xml.xpath('.//w:lvl'):
+                numFmt = lvl.find(f'{{{wns}}}numFmt')
+                if numFmt is not None and numFmt.get(qn('w:val')) == 'bullet':
+                    continue
                 rPr = lvl.find(f'{{{wns}}}rPr')
                 if rPr is None:
                     rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
@@ -1170,12 +1209,161 @@ def split_inline_competencia_and_componente(doc):
                 parent.remove(p_elem)
 
 
+def reorder_competencia_before_question(doc):
+    """
+    Garantiza que Competencia, Componente, Habilidad y Nivel aparezcan SIEMPRE
+    ANTES del enunciado de la pregunta (ej. '54. Cuando acoplamos...'), nunca debajo del enunciado ni encima de A-D.
+    """
+    all_paras = get_all_paragraphs(doc)
+    i = 0
+    while i < len(all_paras):
+        p = all_paras[i]
+        text = p.text.strip()
+
+        # Verificar si p es un enunciado de pregunta (ej. "54.")
+        m_q = re.match(r'^\s*(\d+)[\.\)]', text)
+        if m_q:
+            comp_paras_to_move = []
+            j = i + 1
+            while j < len(all_paras):
+                np = all_paras[j]
+                np_text = np.text.strip()
+
+                # Detener al encontrar opción A-E o la siguiente pregunta
+                if re.match(r'^\s*[\(\[\{]?([a-eA-E])\s*[\.\)\]\}\-\:\/]', np_text) or re.match(r'^\s*\d+[\.\)]', np_text):
+                    break
+
+                # Detectar Competencia, Componente, Habilidad, Nivel, etc.
+                if re.match(r'^(Competencia|Competence|Componente|Component|Habilidad|Habilidades|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\b', np_text, re.IGNORECASE):
+                    comp_paras_to_move.append(np)
+
+                j += 1
+
+            if comp_paras_to_move:
+                q_elem = p._element
+                for c_p in comp_paras_to_move:
+                    q_elem.addprevious(c_p._element)
+                all_paras = get_all_paragraphs(doc)
+
+        i += 1
+
+
+def _format_bullet_item_clean(p):
+    text = p.text.strip()
+    if not text or _has_drawing(p._element):
+        return
+
+    m_bul = BULLET_CHARS_RE.match(text)
+    if m_bul:
+        bul_sym = m_bul.group(0).strip()
+        body_text = text[m_bul.end():].strip()
+
+        if body_text:
+            c_text = _normalize_case(body_text)
+            if not c_text.endswith(('.', ':', ';', '!', '?', ')', ']')):
+                c_text += '.'
+
+            rPr_xml = None
+            runs = p.runs
+            if runs:
+                rPr_elem = runs[0]._element.find(qn('w:rPr'))
+                if rPr_elem is not None:
+                    rPr_xml = copy.deepcopy(rPr_elem)
+
+            p.text = ""
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            set_single_line_spacing(p)
+
+            pPr = p._element.get_or_add_pPr()
+            ind = pPr.find(qn('w:ind'))
+            if ind is not None:
+                pPr.remove(ind)
+            ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="240"/>')
+            pPr.append(ind_elem)
+
+            r1 = p.add_run(f"{bul_sym}  ")
+            r1.bold = False
+            r1.font.size = Pt(11)
+            if rPr_xml is not None:
+                rFonts = rPr_xml.find(qn('w:rFonts'))
+                if rFonts is not None:
+                    a_font = rFonts.get(qn('w:ascii')) or ''
+                    if any(s in a_font.lower() for s in ['symbol', 'wingdings', 'webdings', 'marlett']):
+                        r1.font.name = a_font
+
+            r2 = p.add_run(c_text)
+            r2.bold = False
+            r2.font.name = "Century Gothic"
+            r2.font.size = Pt(11)
+
+
+def process_habilidades_and_bullets(doc):
+    """
+    1. Ajusta 'Habilidad:' (si hay 1 elemento) o 'Habilidades:' (si hay 2 o más).
+    2. Formatea los elementos de viñetas con inicial en mayúscula (Sentence Case, ej: Comparar., Definir.).
+    3. Garantiza espacio limpio y libre de colisiones entre el icono de la viñeta y el texto.
+    """
+    all_paras = get_all_paragraphs(doc)
+    i = 0
+    while i < len(all_paras):
+        p = all_paras[i]
+        text = p.text.strip()
+
+        m_hab = re.match(r'^(Habilidad|Habilidades)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
+        if m_hab:
+            val = m_hab.group(2).strip()
+            if val.lower().strip(' .:-') in ['es', 'en', '']:
+                val = ""
+
+            bullet_items = []
+            j = i + 1
+            while j < len(all_paras):
+                np = all_paras[j]
+                np_text = np.text.strip()
+                if is_bullet_paragraph(np):
+                    bullet_items.append(np)
+                elif not np_text and not _has_drawing(np._element):
+                    pass
+                else:
+                    break
+                j += 1
+
+            if len(bullet_items) >= 2 or (val and len(bullet_items) >= 1):
+                correct_label = "Habilidades"
+            else:
+                correct_label = "Habilidad"
+
+            p.text = ""
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            remove_indents(p)
+            set_single_line_spacing(p)
+            if val and val.strip(' .:-') != '':
+                c_val = _normalize_case(val)
+                if not c_val.endswith(('.', ':', ';', '!', '?')):
+                    c_val += '.'
+                _add_styled_run(p, f"{correct_label}: ", bold=True, size_pt=11, font_name="Century Gothic")
+                _add_styled_run(p, c_val, bold=False, size_pt=11, font_name="Century Gothic")
+            else:
+                _add_styled_run(p, f"{correct_label}:", bold=True, size_pt=11, font_name="Century Gothic")
+
+            for b_p in bullet_items:
+                _format_bullet_item_clean(b_p)
+
+        elif is_bullet_paragraph(p):
+            _format_bullet_item_clean(p)
+
+        i += 1
+
+
 def process_competencias_and_componentes(doc):
     # Always use Century Gothic — the post-merge pass will enforce it anyway
     font_name = "Century Gothic"
 
     # Step 0: Extraer Competencia/Componente atrapados en tablas a párrafos normales libres
     convert_competencia_tables_to_paragraphs(doc)
+
+    # Step 0.1: Mover Competencia / Componente / Habilidad / Nivel ANTES del enunciado de la pregunta si venían abajo
+    reorder_competencia_before_question(doc)
 
     # Step 0.5: Dividir si vienen pegados en la misma línea
     split_inline_competencia_and_componente(doc)
@@ -1276,6 +1464,9 @@ def process_competencias_and_componentes(doc):
 
         i += 1
 
+    # Step 5: Process Habilidad / Habilidades singular/plural + bullet item casing & spacing
+    process_habilidades_and_bullets(doc)
+
 
 def ensure_proper_spacing_between_questions(doc):
     """
@@ -1313,7 +1504,26 @@ def ensure_proper_spacing_between_questions(doc):
                 continue
         i += 1
 
-    # 3. Garantizar exactamente 1 línea en blanco al terminar una pregunta/opciones antes del nuevo bloque
+    # 3. Eliminar cualquier línea en blanco entre las opciones (A, B, C, D) de las preguntas
+    all_paras = get_all_paragraphs(doc)
+    i = 0
+    while i < len(all_paras) - 1:
+        p = all_paras[i]
+        text = p.text.strip()
+        is_opt = bool(re.match(r'^\s*[\(\[\{]?([a-eA-E])\s*[\.\)\]\}\-\:\/]', text))
+        if is_opt:
+            j = i + 1
+            while j < len(all_paras):
+                np = all_paras[j]
+                np_text = np.text.strip()
+                if not np_text and not _has_drawing(np._element):
+                    _safe_remove_para(np)
+                    all_paras = get_all_paragraphs(doc)
+                else:
+                    break
+        i += 1
+
+    # 4. Garantizar exactamente 1 línea en blanco al terminar una pregunta/opciones antes del nuevo bloque
     all_paras = get_all_paragraphs(doc)
     i = 0
     while i < len(all_paras):
@@ -1365,22 +1575,49 @@ def _merge_docx_with_rels(master_doc, sub_doc, add_break=False):
         master_doc.add_page_break()
 
 
+def strip_leading_empty_paras_and_breaks(doc):
+    body = doc.element.body
+    for elem in list(body):
+        if elem.tag.endswith('}p') or elem.tag == 'p':
+            for br in elem.xpath('.//w:br[@w:type="page"]'):
+                parent = br.getparent()
+                if parent is not None:
+                    parent.remove(br)
+            text = ''.join(elem.xpath('.//w:t/text()')).strip()
+            if not text and not _has_drawing(elem):
+                body.remove(elem)
+            else:
+                break
+
+
+def strip_trailing_empty_paras_and_breaks(doc):
+    body = doc.element.body
+    for elem in reversed(list(body)):
+        if elem.tag.endswith('}p') or elem.tag == 'p':
+            for br in elem.xpath('.//w:br[@w:type="page"]'):
+                parent = br.getparent()
+                if parent is not None:
+                    parent.remove(br)
+            text = ''.join(elem.xpath('.//w:t/text()')).strip()
+            if not text and not _has_drawing(elem):
+                body.remove(elem)
+            else:
+                break
+
+
 def strip_section_breaks(doc):
-    """Remove ALL inline sectPr elements (section breaks inside paragraph pPr).
+    """Remove ALL inline sectPr elements (section breaks inside paragraph pPr or body).
     This merges all sections into one so content flows continuously without
     forced page or section breaks from the source documents."""
     wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
     body = doc.element.body
-    for p_elem in list(body):
-        # Only process paragraph elements
-        if not p_elem.tag.endswith('}p') and p_elem.tag != 'p':
+    body_sectPr = body.find(f'{{{wns}}}sectPr')
+    for sectPr in list(body.xpath('.//w:sectPr')):
+        if sectPr == body_sectPr:
             continue
-        pPr = p_elem.find(f'{{{wns}}}pPr')
-        if pPr is None:
-            continue
-        sectPr = pPr.find(f'{{{wns}}}sectPr')
-        if sectPr is not None:
-            pPr.remove(sectPr)
+        parent = sectPr.getparent()
+        if parent is not None and not parent.tag.endswith('body'):
+            parent.remove(sectPr)
 
 
 # ── MAIN MERGE ───────────────────────────────────────────────
@@ -1419,6 +1656,8 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         if not os.path.exists(fp):
             continue
         sd = Document(fp)
+        strip_leading_empty_paras_and_breaks(sd)
+        strip_section_breaks(sd)
         _resolve_autonumbering(sd)
         cur = apply_renumbering_and_ranges(sd, cur)
         process_competencias_and_componentes(sd)
@@ -1455,6 +1694,38 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
     for sec in tpl.sections:
         force_single_column(sec)
 
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    for br in list(tpl.element.body.xpath('.//w:br[@w:type="page"]')):
+        p_br = br.getparent()
+        if p_br is not None:
+            p_br.remove(br)
+    for s in list(tpl.element.body.xpath('.//w:sectPr')):
+        if s.getparent() != tpl.element.body:
+            p_s = s.getparent()
+            if p_s is not None:
+                p_s.remove(s)
+
+    # Trim trailing empty paragraphs in template body to max 2 spacers
+    # (the template has ~8 empty ¶ that push content to page 2;
+    #  2 spacers are enough to clear the floating header graphic)
+    body_sect = tpl.element.body.find(f'{{{wns}}}sectPr')
+    trailing_empty = []
+    for elem in reversed(list(tpl.element.body)):
+        if elem == body_sect:
+            continue
+        if elem.tag.endswith('}p') or elem.tag == 'p':
+            t = ''.join(te.text or '' for te in elem.iter(f'{{{wns}}}t')).strip()
+            has_draw = len(elem.findall('.//{http://schemas.openxmlformats.org/drawingml/2006/main}blip')) > 0 or len(elem.findall('.//{urn:schemas-microsoft-com:vml}shape')) > 0
+            if not t and not has_draw:
+                trailing_empty.append(elem)
+            else:
+                break
+        else:
+            break
+    max_spacers = 2
+    for emp in trailing_empty[max_spacers:]:
+        tpl.element.body.remove(emp)
+
     _SENTINEL_TEXT = "GESABOUNDARY"
     sentinel_p = parse_xml(
         f'<w:p {nsdecls("w")}><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="2"/><w:szCs w:val="2"/><w:color w:val="FFFFFF"/></w:rPr><w:t xml:space="preserve">{_SENTINEL_TEXT}</w:t></w:r></w:p>'
@@ -1466,94 +1737,24 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
 
     merged_path = os.path.join(tmp_dir, 'word_merged.docx')
 
-    # ── Attempt: Word COM ──────────────────────────────────────
-    # (original approach from v1.0 — InsertFile, then
-    #  apply_formatting_to_document re‑applies Century Gothic)
-    import win32com.client as win32
-    word = None
-    doc = None
-    try:
-        word = win32.DispatchEx('Word.Application')
-        word.Visible = False
-        word.DisplayAlerts = False
-        time.sleep(0.3)
-
-        doc = word.Documents.Open(
-            os.path.abspath(prepped),
-            ConfirmConversions=False, ReadOnly=False,
-            AddToRecentFiles=False)
-        time.sleep(0.2)
-
-        for i, tp in enumerate(temp_subs):
-            rng = doc.Range()
-            rng.Collapse(0)
-            rng.InsertFile(os.path.abspath(tp), ConfirmConversions=False)
-            if i < len(temp_subs) - 1:
-                rng = doc.Range()
-                rng.Collapse(0)
-                rng.InsertBreak(2)
-
-        for s_idx in range(1, doc.Sections.Count + 1):
-            try:
-                doc.Sections(s_idx).PageSetup.TextColumns.SetCount(1)
-            except:
-                pass
-
-        try:
-            doc.Content.Find.ClearFormatting()
-            for k, v in replacements_map.items():
-                doc.Content.Find.Execute(FindText=k, ReplaceWith=str(v), Replace=2)
-        except:
-            pass
-        for i in range(1, doc.Shapes.Count + 1):
-            try:
-                shape = doc.Shapes.Item(i)
-                if shape.Type == 6:
-                    for j in range(1, shape.GroupItems.Count + 1):
-                        try:
-                            gi = shape.GroupItems.Item(j)
-                            if gi.TextFrame.HasText:
-                                gi.TextFrame.TextRange.Find.ClearFormatting()
-                                for k, v in replacements_map.items():
-                                    gi.TextFrame.TextRange.Find.Execute(
-                                        FindText=k, ReplaceWith=str(v), Replace=2)
-                        except:
-                            pass
-                elif shape.TextFrame.HasText:
-                    shape.TextFrame.TextRange.Find.ClearFormatting()
-                    for k, v in replacements_map.items():
-                        shape.TextFrame.TextRange.Find.Execute(
-                            FindText=k, ReplaceWith=str(v), Replace=2)
-            except:
-                pass
-
-        doc.SaveAs2(os.path.abspath(merged_path), AddToRecentFiles=False)
-        doc.Close(False); doc = None
-        word.Quit(); word = None
-    except Exception:
-        if doc is not None:
-            try: doc.Close(False)
-            except: pass
-        if word is not None:
-            try: word.Quit()
-            except: pass
-        doc = None
-        word = None
-
-    # ── Fallback: python-docx merge if COM unavailable ─────────
-    if not os.path.exists(merged_path):
+    # ── Merge sub-documents cleanly (0 section breaks) ─────────
+    final_doc = Document(prepped)
+    for i, tp in enumerate(temp_subs):
         if stop_check is not None and stop_check():
             raise RuntimeError("Cancelado por el usuario.")
-        final_doc = Document(prepped)
-        for i, tp in enumerate(temp_subs):
-            if stop_check is not None and stop_check():
-                raise RuntimeError("Cancelado por el usuario.")
-            sub_doc = Document(tp)
-            _merge_docx_with_rels(final_doc, sub_doc, add_break=(i < len(temp_subs) - 1))
-        final_doc.save(merged_path)
+        sub_doc = Document(tp)
+        _merge_docx_with_rels(final_doc, sub_doc, add_break=(i < len(temp_subs) - 1))
+
+    strip_section_breaks(final_doc)
+    final_doc.save(merged_path)
 
     # ── Post-process (python-docx) ──────────────────────────────
     final = Document(merged_path)
+    strip_section_breaks(final)
+    process_competencias_and_componentes(final)
+    process_habilidades_and_bullets(final)
+    reorder_competencia_before_question(final)
+    ensure_proper_spacing_between_questions(final)
     expanded_title = expand_template(title_template, title_context)
     final.core_properties.title = expanded_title
     final.core_properties.category = f"{eval_prefix} de Suficiencia Académica"
@@ -1592,12 +1793,14 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
             rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
             rPr.append(rFonts)
         else:
-            rFonts.set(qn('w:ascii'), font_name)
-            rFonts.set(qn('w:hAnsi'), font_name)
-            rFonts.set(qn('w:cs'), font_name)
-            for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
-                if qn(theme_attr) in rFonts.attrib:
-                    del rFonts.attrib[qn(theme_attr)]
+            ascii_f = (rFonts.get(qn('w:ascii')) or '').lower()
+            if not any(sym in ascii_f for sym in ['symbol', 'wingdings', 'webdings', 'marlett']):
+                rFonts.set(qn('w:ascii'), font_name)
+                rFonts.set(qn('w:hAnsi'), font_name)
+                rFonts.set(qn('w:cs'), font_name)
+                for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
+                    if qn(theme_attr) in rFonts.attrib:
+                        del rFonts.attrib[qn(theme_attr)]
         sz = rPr.find(f'{{{wns}}}sz')
         if sz is None:
             sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="22"/>')
@@ -1623,6 +1826,15 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         if sentinel_idx is not None:
             break
 
+    # Strip page breaks only from sentinel paragraph if any
+    if sentinel_idx is not None:
+        child = body_children[sentinel_idx]
+        if child.tag.endswith('}p') or child.tag == 'p':
+            for br in list(child.xpath('.//w:br[@w:type="page"]')):
+                p_br = br.getparent()
+                if p_br is not None:
+                    p_br.remove(br)
+
     if sentinel_idx is not None:
         try:
             body_children[sentinel_idx].getparent().remove(body_children[sentinel_idx])
@@ -1637,11 +1849,14 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
     for elem in subdoc_elems:
         if elem.tag.endswith('}p') or elem.tag == 'p':
             para = _Paragraph(elem, final)
+            set_single_line_spacing(para)
             text = para.text.strip()
-            is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]', text, re.IGNORECASE))
+
+            is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidad|Habilidades|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\s*[:\-]', text, re.IGNORECASE))
             is_q_or_opt = bool(re.match(r'^(\s*[\(\[\{]?(\d+|[a-eA-E])\s*[\.\)\]\}\-\:\/])', text))
+            is_bul = is_bullet_paragraph(para)
             if not _has_drawing(elem):
-                para.alignment = WD_ALIGN_PARAGRAPH.LEFT if (is_comp or is_q_or_opt) else WD_ALIGN_PARAGRAPH.JUSTIFY
+                para.alignment = WD_ALIGN_PARAGRAPH.LEFT if (is_comp or is_q_or_opt or is_bul) else WD_ALIGN_PARAGRAPH.JUSTIFY
         for r_elem in elem.xpath('.//w:r'):
             _force_run_font(r_elem)
 
@@ -1650,6 +1865,9 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         if hasattr(final.part, 'numbering_part') and final.part.numbering_part is not None:
             num_xml = final.part.numbering_part.element
             for lvl in num_xml.xpath('.//w:lvl'):
+                numFmt = lvl.find(f'{{{wns}}}numFmt')
+                if numFmt is not None and numFmt.get(qn('w:val')) == 'bullet':
+                    continue
                 lvl_rPr = lvl.find(f'{{{wns}}}rPr')
                 if lvl_rPr is None:
                     lvl_rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
