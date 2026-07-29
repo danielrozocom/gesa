@@ -957,12 +957,19 @@ class GenerateWorker(QObject):
 
             try:
                 last_num = merge_docx_with_guaranteed_header(
-                    self.template_path, sub["files"], out, config, cur_offset
+                    self.template_path, sub["files"], out, config, cur_offset,
+                    stop_check=lambda: self.stop_requested
                 )
+                if self.stop_requested:
+                    results.append(("stopped", "Proceso detenido por el usuario."))
+                    break
                 cur_offset = last_num
                 results.append(("ok", out))
             except Exception as e:
-                results.append(("error", f"{out}: {e}"))
+                if self.stop_requested:
+                    results.append(("stopped", "Proceso detenido por el usuario."))
+                else:
+                    results.append(("error", f"{out}: {e}"))
                 break
 
             completed_tasks += 1
@@ -2588,6 +2595,14 @@ class DesktopApp(QMainWindow):
             self._stop_requested = True
             if hasattr(self, "_worker") and self._worker:
                 self._worker.stop_requested = True
+            # Force-kill Word so any blocked COM call fails immediately
+            try:
+                subprocess.run(
+                    ["taskkill", "/f", "/im", "WINWORD.EXE"],
+                    capture_output=True, timeout=3
+                )
+            except Exception:
+                pass
             self.stop_btn.setIcon(_qta().icon("fa5s.stop", color="#fca5a5", color_disabled="#fca5a5"))
             self.stop_btn.setText("  Cancelando...")
             self.stop_btn.setStyleSheet("""
@@ -2896,6 +2911,13 @@ if __name__ == "__main__":
     try:
         splash = GesaSplashScreen(icon_file)
         splash.show()
+        app.processEvents()
+
+        # Pre‑load the heavy Code module BEFORE building the UI so the
+        # delay happens here (with splash visible) rather than inside
+        # DesktopApp._build() where no progress feedback is shown.
+        import Code as _CodePreload
+        _ = _CodePreload.GRADES_INFO
         app.processEvents()
 
         window = DesktopApp()
