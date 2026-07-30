@@ -231,7 +231,7 @@ class DateSelector(QWidget):
 
 SHADCN_DARK = {
     "bg": "#0a0e17", "card": "#131927", "border": "#1e293b",
-    "text": "#f8fafc", "muted": "#94a3b8",
+    "text": "#f8fafc", "muted": "#94a3b8", "text_secondary": "#94a3b8",
     "blue": "#93abd9", "green": "#10b981", "red": "#ef4444",
     "blue_hover": "#7d92c3", "green_hover": "#059669", "red_hover": "#dc2626",
     "input_bg": "#131927",
@@ -244,7 +244,7 @@ SHADCN_DARK = {
 
 SHADCN_LIGHT = {
     "bg": "#f4f6fa", "card": "#ffffff", "border": "#cbd5e1",
-    "text": "#0f172a", "muted": "#64748b",
+    "text": "#0f172a", "muted": "#64748b", "text_secondary": "#64748b",
     "blue": "#364B87", "green": "#059669", "red": "#dc2626",
     "blue_hover": "#2b3c6d", "green_hover": "#047857", "red_hover": "#b91c1c",
     "input_bg": "#ffffff",
@@ -280,7 +280,39 @@ def make_palette(c):
     return p
 
 
+def ensure_check_icons():
+    try:
+        base = os.path.dirname(os.path.abspath(__file__))
+    except Exception:
+        base = os.getcwd()
+    white_p = os.path.join(base, "check_mark.png")
+    blue_p = os.path.join(base, "check_blue.png")
+    if not os.path.exists(white_p) or not os.path.exists(blue_p):
+        try:
+            from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QPainterPath
+            from PyQt6.QtCore import Qt
+            for pth, color_hex in [(white_p, '#ffffff'), (blue_p, '#364B87')]:
+                if not os.path.exists(pth):
+                    pix = QPixmap(32, 32)
+                    pix.fill(Qt.GlobalColor.transparent)
+                    p = QPainter(pix)
+                    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+                    pen = QPen(QColor(color_hex), 4.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+                    p.setPen(pen)
+                    path_obj = QPainterPath()
+                    path_obj.moveTo(6, 16)
+                    path_obj.lineTo(13, 23)
+                    path_obj.lineTo(26, 8)
+                    p.drawPath(path_obj)
+                    p.end()
+                    pix.save(pth)
+        except Exception:
+            pass
+    return white_p.replace("\\", "/"), blue_p.replace("\\", "/")
+
+
 def make_stylesheet(c):
+    white_icon, blue_icon = ensure_check_icons()
     return f"""
 QWidget {{
     background-color: transparent;
@@ -724,9 +756,138 @@ QFrame#divider {{
     max-height: 1px;
     margin: 4px 0;
 }}
-QListWidget {{
+/* Global Reset & Core */
+* {{
+    box-sizing: border-box;
+}}
+QWidget {{
+    background-color: {c["bg"]};
+    color: {c["text"]};
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+}}
+
+/* Typography Header */
+QLabel#app-title {{
+    font-size: 16px;
+    font-weight: 700;
+    color: {c["text"]};
+    letter-spacing: -0.3px;
+}}
+QLabel#app-subtitle {{
+    font-size: 12px;
+    color: {c["text_secondary"]};
+    font-weight: 400;
+}}
+
+/* Cards & Containers */
+QFrame#card {{
+    background-color: {c["card"]};
+    border: 1px solid {c["border"]};
+    border-radius: 10px;
+}}
+QFrame#card-header {{
+    background-color: transparent;
+    border-bottom: 1px solid {c["border"]};
+}}
+
+/* Section Headers */
+QLabel#section-title {{
+    font-size: 13px;
+    font-weight: 700;
+    color: {c["text"]};
+    letter-spacing: -0.2px;
+}}
+
+/* Inputs & Combo Boxes */
+QLineEdit, QComboBox, QDateEdit {{
     background-color: {c["input_bg"]};
     color: {c["text"]};
+    border: 1px solid {c["border"]};
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    min-height: 18px;
+}}
+QLineEdit:focus, QComboBox:focus, QDateEdit:focus {{
+    border: 1.5px solid {c["blue"]};
+    background-color: {c["card"]};
+}}
+QComboBox::drop-down {{
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 24px;
+    border-left: none;
+}}
+QComboBox QAbstractItemView {{
+    background-color: {c["card"]};
+    color: {c["text"]};
+    selection-background-color: {c["blue"]};
+    selection-color: #ffffff;
+    border: 1px solid {c["border"]};
+    border-radius: 6px;
+    padding: 4px;
+}}
+
+/* Buttons */
+QPushButton {{
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 6px;
+    padding: 6px 14px;
+    min-height: 18px;
+}}
+QPushButton#btn-primary {{
+    background-color: {c["blue"]};
+    color: #ffffff;
+    border: none;
+}}
+QPushButton#btn-primary:hover {{
+    background-color: {c["blue_hover"]};
+}}
+QPushButton#btn-secondary {{
+    background-color: {c["input_bg"]};
+    color: {c["text"]};
+    border: 1px solid {c["border"]};
+}}
+QPushButton#btn-secondary:hover {{
+    background-color: {c["hover_bg"]};
+    border-color: {c["text_secondary"]};
+}}
+QPushButton#btn-icon {{
+    background-color: transparent;
+    border: 1px solid {c["border"]};
+    border-radius: 6px;
+    padding: 4px 8px;
+    min-width: 24px;
+    min-height: 24px;
+}}
+QPushButton#btn-icon:hover {{
+    background-color: {c["hover_bg"]};
+    border-color: {c["blue"]};
+}}
+
+/* Scrollbars */
+QScrollBar:vertical {{
+    background: transparent;
+    width: 8px;
+    margin: 0px;
+}}
+QScrollBar::handle:vertical {{
+    background: {c["border"]};
+    min-height: 20px;
+    border-radius: 4px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: {c["text_secondary"]};
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+
+/* List Widgets */
+QListWidget {{
+    background-color: {c["card"]};
     border: 1px solid {c["border"]};
     border-radius: 8px;
     font-family: "Segoe UI";
@@ -738,6 +899,30 @@ QListWidget::item {{
     padding: 7px 10px;
     border-radius: 5px;
     margin: 1px 0;
+}}
+QListWidget::indicator {{
+    width: 16px;
+    height: 16px;
+    border: 1.5px solid {c["border"]};
+    border-radius: 4px;
+    background-color: {c["card"]};
+}}
+QListWidget::indicator:unchecked:hover {{
+    border-color: {c["blue"]};
+}}
+QListWidget::indicator:unchecked:selected {{
+    border: 1.5px solid rgba(255, 255, 255, 0.7);
+    background-color: transparent;
+}}
+QListWidget::indicator:checked {{
+    background-color: {c["blue"]};
+    border: 1.5px solid {c["blue"]};
+    image: url("{white_icon}");
+}}
+QListWidget::indicator:checked:selected {{
+    background-color: #ffffff;
+    border: 1.5px solid #ffffff;
+    image: url("{blue_icon}");
 }}
 QListWidget::item:selected {{
     background-color: {c["blue"]};
@@ -836,6 +1021,7 @@ QDialog QPushButton:hover {{
 class ReorderableList(QListWidget):
     reordered = pyqtSignal()
     filesDropped = pyqtSignal(list)
+    deleteRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -873,6 +1059,100 @@ class ReorderableList(QListWidget):
             super().dropEvent(event)
             self.reordered.emit()
 
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
+            self.deleteRequested.emit()
+        else:
+            super().keyPressEvent(event)
+
+
+class MissingFilesDialog(QDialog):
+    def __init__(self, missing_list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Archivos Faltantes")
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(400)
+        self.missing_list = missing_list
+        self.resolved_any = False
+        
+        layout = QVBoxLayout(self)
+        
+        lbl = QLabel("Los siguientes archivos no existen o fueron movidos.\nPor favor reubícalos o presiona Omitir.")
+        lbl.setStyleSheet("font-size: 14px; font-weight: 600;")
+        layout.addWidget(lbl)
+        
+        self.list_widget = QListWidget()
+        for item_data in self.missing_list:
+            display = f"[{item_data['session']['name']}] {item_data['sub']['name']} ➔ {os.path.basename(item_data['path'])}"
+            item = QListWidgetItem(display)
+            item.setData(Qt.ItemDataRole.UserRole, item_data)
+            self.list_widget.addItem(item)
+        
+        layout.addWidget(self.list_widget)
+        
+        btn_layout = QHBoxLayout()
+        self.omit_btn = QPushButton("Omitir Seleccionado")
+        self.omit_btn.clicked.connect(self._omit_selected)
+        self.omit_btn.setObjectName("btn-red")
+        btn_layout.addWidget(self.omit_btn)
+        
+        self.relocate_btn = QPushButton("Reubicar Seleccionado")
+        self.relocate_btn.clicked.connect(self._relocate_selected)
+        self.relocate_btn.setObjectName("btn-primary")
+        btn_layout.addWidget(self.relocate_btn)
+        
+        layout.addLayout(btn_layout)
+        
+        bottom_layout = QHBoxLayout()
+        bottom_layout.addStretch()
+        self.continue_btn = QPushButton("Continuar")
+        self.continue_btn.clicked.connect(self.accept)
+        self.continue_btn.setObjectName("btn-green")
+        bottom_layout.addWidget(self.continue_btn)
+        
+        self.cancel_btn = QPushButton("Cancelar Generación")
+        self.cancel_btn.clicked.connect(self.reject)
+        self.cancel_btn.setObjectName("btn-outline")
+        bottom_layout.addWidget(self.cancel_btn)
+        
+        layout.addLayout(bottom_layout)
+        
+        self._update_buttons()
+        self.list_widget.itemSelectionChanged.connect(self._update_buttons)
+
+    def _update_buttons(self):
+        has_sel = bool(self.list_widget.selectedItems())
+        self.omit_btn.setEnabled(has_sel)
+        self.relocate_btn.setEnabled(has_sel)
+        self.continue_btn.setEnabled(self.list_widget.count() == 0)
+
+    def _omit_selected(self):
+        for item in self.list_widget.selectedItems():
+            data = item.data(Qt.ItemDataRole.UserRole)
+            sub = data["sub"]
+            if data["path"] in sub["files"]:
+                sub["files"].remove(data["path"])
+            row = self.list_widget.row(item)
+            self.list_widget.takeItem(row)
+        self.resolved_any = True
+        self._update_buttons()
+
+    def _relocate_selected(self):
+        item = self.list_widget.currentItem()
+        if not item: return
+        data = item.data(Qt.ItemDataRole.UserRole)
+        
+        path, _ = QFileDialog.getOpenFileName(self, "Reubicar archivo", "", "Word (*.docx);;Todos (*.*)")
+        if path:
+            sub = data["sub"]
+            if data["path"] in sub["files"]:
+                idx = sub["files"].index(data["path"])
+                sub["files"][idx] = path
+            
+            row = self.list_widget.row(item)
+            self.list_widget.takeItem(row)
+            self.resolved_any = True
+            self._update_buttons()
 
 class GenerateWorker(QObject):
     progress_updated = pyqtSignal(float, str)
@@ -1187,6 +1467,8 @@ class DesktopApp(QMainWindow):
         self.sessions_lb.clear()
         for s in self.sessions:
             item = QListWidgetItem(f"  {s['name']}")
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if s.get("checked", True) else Qt.CheckState.Unchecked)
             self.sessions_lb.addItem(item)
         if self.sessions:
             if self._selected_session >= len(self.sessions):
@@ -1199,7 +1481,10 @@ class DesktopApp(QMainWindow):
         s = self._session()
         if s:
             for sub in s["subsessions"]:
-                self.subs_lb.addItem(QListWidgetItem(f"  {sub['name']}"))
+                item = QListWidgetItem(f"  {sub['name']}")
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked if sub.get("checked", True) else Qt.CheckState.Unchecked)
+                self.subs_lb.addItem(item)
             if self._selected_sub >= len(s["subsessions"]):
                 self._selected_sub = len(s["subsessions"]) - 1
             if s["subsessions"]:
@@ -1220,6 +1505,8 @@ class DesktopApp(QMainWindow):
             for f in sub["files"]:
                 item = QListWidgetItem(f"  {os.path.basename(f)}")
                 item.setToolTip(f)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked)
                 self.files_lb.addItem(item)
 
     def _open_file_location(self, item=None):
@@ -1267,7 +1554,10 @@ class DesktopApp(QMainWindow):
         self._refresh_sessions()
 
     def _remove_sessions(self):
-        rows = sorted(set(i.row() for i in self.sessions_lb.selectedIndexes()), reverse=True)
+        rows = [i.row() for i in self.sessions_lb.selectedIndexes()]
+        if not rows and self.sessions_lb.currentRow() != -1:
+            rows = [self.sessions_lb.currentRow()]
+        rows = sorted(set(rows), reverse=True)
         if not rows:
             return
         if len(rows) == len(self.sessions):
@@ -1304,7 +1594,10 @@ class DesktopApp(QMainWindow):
         s = self._session()
         if s is None:
             return
-        rows = sorted(set(i.row() for i in self.subs_lb.selectedIndexes()), reverse=True)
+        rows = [i.row() for i in self.subs_lb.selectedIndexes()]
+        if not rows and self.subs_lb.currentRow() != -1:
+            rows = [self.subs_lb.currentRow()]
+        rows = sorted(set(rows), reverse=True)
         if not rows:
             return
         if len(rows) == len(s["subsessions"]):
@@ -1512,7 +1805,10 @@ class DesktopApp(QMainWindow):
         sub = self._sub()
         if sub is None:
             return
-        rows = sorted(set(i.row() for i in self.files_lb.selectedIndexes()))
+        rows = [i.row() for i in self.files_lb.selectedIndexes()]
+        if not rows and self.files_lb.currentRow() != -1:
+            rows = [self.files_lb.currentRow()]
+        rows = sorted(set(rows), reverse=True)
         if not rows:
             return
 
@@ -2143,6 +2439,7 @@ class DesktopApp(QMainWindow):
         self.sessions_lb.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.sessions_lb.currentRowChanged.connect(self._on_select_session)
         self.sessions_lb.reordered.connect(self._on_sessions_reordered)
+        self.sessions_lb.deleteRequested.connect(self._remove_sessions)
         col1_layout.addWidget(self.sessions_lb)
 
         workspace.addWidget(col1)
@@ -2175,6 +2472,7 @@ class DesktopApp(QMainWindow):
         self.subs_lb.currentRowChanged.connect(self._on_select_sub)
         self.subs_lb.itemEntered.connect(self._on_sub_hover)
         self.subs_lb.reordered.connect(self._on_subs_reordered)
+        self.subs_lb.deleteRequested.connect(self._remove_subs)
         col2_layout.addWidget(self.subs_lb)
 
         workspace.addWidget(col2)
@@ -2221,6 +2519,7 @@ class DesktopApp(QMainWindow):
         self.files_lb.reordered.connect(self._on_files_reordered)
         self.files_lb.filesDropped.connect(self._add_files_from_paths)
         self.files_lb.itemDoubleClicked.connect(self._open_file_location)
+        self.files_lb.deleteRequested.connect(self._remove_files)
         col3_layout.addWidget(self.files_lb)
 
         workspace.addWidget(col3)
@@ -2289,12 +2588,23 @@ class DesktopApp(QMainWindow):
         btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.setSpacing(6)
 
-        self.generate_btn = QPushButton("  GENERAR TODO")
+        gen_box = QWidget()
+        gen_box_layout = QHBoxLayout(gen_box)
+        gen_box_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.gen_mode_combo = QComboBox()
+        self.gen_mode_combo.addItems(["Generar Todo", "Generar Seleccionado", "Generar Actual"])
+        self.gen_mode_combo.setMinimumHeight(40)
+        gen_box_layout.addWidget(self.gen_mode_combo, stretch=1)
+
+        self.generate_btn = QPushButton("  GENERAR")
         self.generate_btn.setObjectName("btn-green")
         self.generate_btn.setMinimumHeight(40)
         self.generate_btn.clicked.connect(self._generate_all)
         self._reg_icon(self.generate_btn, "fa5s.play", "#ffffff")
-        btn_layout.addWidget(self.generate_btn)
+        gen_box_layout.addWidget(self.generate_btn, stretch=1)
+        
+        btn_layout.addWidget(gen_box)
 
         self.stop_btn = QPushButton("  DETENER")
         self.stop_btn.setObjectName("btn-red")
@@ -2625,9 +2935,22 @@ class DesktopApp(QMainWindow):
             self._set_status_color("orange")
             self._log("⚠️ Cancelación solicitada por el usuario...")
 
+    def _sync_ui_state(self):
+        for i in range(self.sessions_lb.count()):
+            if i < len(self.sessions):
+                self.sessions[i]["checked"] = (self.sessions_lb.item(i).checkState() == Qt.CheckState.Checked)
+        s = self._session()
+        if s:
+            for i in range(self.subs_lb.count()):
+                if i < len(s["subsessions"]):
+                    s["subsessions"][i]["checked"] = (self.subs_lb.item(i).checkState() == Qt.CheckState.Checked)
+
     def _generate_all(self):
         if self.processing:
             return
+        
+        self._sync_ui_state()
+        mode = self.gen_mode_combo.currentText() if hasattr(self, "gen_mode_combo") else "Generar Todo"
         g_val = self.grade_combo.currentText()
         p_val = self.period_combo.currentText()
         if not g_val or g_val.startswith("Seleccionar"):
@@ -2636,14 +2959,51 @@ class DesktopApp(QMainWindow):
         if not p_val or p_val.startswith("Seleccionar"):
             self._show_warning("Periodo no seleccionado", "Por favor selecciona un Periodo antes de generar.")
             return
-        if not self.sessions:
-            self._show_warning("Sin datos", "No hay sesiones configuradas.")
+        
+        filtered_sessions = []
+        if mode == "Generar Actual":
+            s = self._session()
+            sub = self._sub()
+            if s and sub:
+                s_copy = s.copy()
+                s_copy["subsessions"] = [sub]
+                filtered_sessions.append(s_copy)
+        elif mode == "Generar Seleccionado":
+            for s in self.sessions:
+                if s.get("checked", True):
+                    checked_subs = [sub for sub in s["subsessions"] if sub.get("checked", True)]
+                    if checked_subs:
+                        s_copy = s.copy()
+                        s_copy["subsessions"] = checked_subs
+                        filtered_sessions.append(s_copy)
+        else:
+            filtered_sessions = self.sessions
+
+        if not filtered_sessions:
+            self._show_warning("Sin datos", "No hay sesiones o subsesiones válidas para generar.")
             return
-        if not self.template_path or not os.path.isfile(self.template_path):
-            self._show_warning("Sin plantilla", "Selecciona la plantilla maestra.")
-            return
+
+        missing_files = []
+        for s in filtered_sessions:
+            for sub in s["subsessions"]:
+                for idx, filepath in enumerate(sub["files"]):
+                    if not os.path.exists(filepath):
+                        missing_files.append({
+                            "session": s,
+                            "sub": sub,
+                            "file_idx": idx,
+                            "path": filepath
+                        })
+        if missing_files:
+            dlg = MissingFilesDialog(missing_files, self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            if dlg.resolved_any:
+                self._save_config()
+                self._refresh_files()
+
         total_files = sum(
-            len(sub["files"]) for s in self.sessions for sub in s["subsessions"]
+            len(sub["files"]) for s in filtered_sessions for sub in s["subsessions"]
         )
         if total_files == 0:
             self._show_warning("Sin archivos", "Agrega archivos a las subsesiones.")
@@ -2651,7 +3011,7 @@ class DesktopApp(QMainWindow):
 
         empty_subs = [
             f"{s['name']} ➔ {sub['name']}"
-            for s in self.sessions for sub in s["subsessions"]
+            for s in filtered_sessions for sub in s["subsessions"]
             if not sub["files"]
         ]
         if empty_subs:
@@ -2709,7 +3069,7 @@ class DesktopApp(QMainWindow):
 
         self._worker = GenerateWorker(
             self.template_path,
-            self.sessions,
+            filtered_sessions,
             self.grade_combo.currentText(),
             self.period_combo.currentText(),
             self.name_template,
