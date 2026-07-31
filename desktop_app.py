@@ -243,7 +243,7 @@ SHADCN_DARK = {
 }
 
 SHADCN_LIGHT = {
-    "bg": "#f4f6fa", "card": "#ffffff", "border": "#cbd5e1",
+    "bg": "#f1f5f9", "card": "#ffffff", "border": "#cbd5e1",
     "text": "#0f172a", "muted": "#64748b", "text_secondary": "#64748b",
     "blue": "#364B87", "green": "#059669", "red": "#dc2626",
     "blue_hover": "#2b3c6d", "green_hover": "#047857", "red_hover": "#b91c1c",
@@ -507,14 +507,14 @@ QComboBox QAbstractItemView {{
     color: {c["text"]};
     selection-background-color: {c["blue"]};
     selection-color: #ffffff;
-    border: none;
-    outline: none;
+    border: 1px solid {c["border"]};
+    border-radius: 6px;
     padding: 4px;
+    outline: none;
 }}
 QComboBox QAbstractItemView::item {{
-    padding: 6px 10px;
+    padding: 6px 12px;
     border-radius: 4px;
-    min-height: 28px;
     color: {c["text"]};
     background-color: transparent;
 }}
@@ -761,10 +761,13 @@ QFrame#divider {{
     box-sizing: border-box;
 }}
 QWidget {{
-    background-color: {c["bg"]};
+    background-color: transparent;
     color: {c["text"]};
     font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
     font-size: 13px;
+}}
+QMainWindow, QWidget#central {{
+    background-color: {c["bg"]};
 }}
 
 /* Typography Header */
@@ -819,16 +822,6 @@ QComboBox::drop-down {{
     width: 24px;
     border-left: none;
 }}
-QComboBox QAbstractItemView {{
-    background-color: {c["card"]};
-    color: {c["text"]};
-    selection-background-color: {c["blue"]};
-    selection-color: #ffffff;
-    border: 1px solid {c["border"]};
-    border-radius: 6px;
-    padding: 4px;
-}}
-
 /* Buttons */
 QPushButton {{
     font-size: 12px;
@@ -978,10 +971,12 @@ QScrollBar::handle:vertical:hover {{
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0;
 }}
-QMessageBox {{
+QMessageBox, QMessageBox QWidget, QMessageBox QFrame {{
     background-color: {c["card"]};
+    border: none;
 }}
 QMessageBox QLabel {{
+    background-color: {c["card"]};
     color: {c["text"]};
     font-size: 12px;
     min-width: 300px;
@@ -1503,8 +1498,14 @@ class DesktopApp(QMainWindow):
         sub = self._sub()
         if sub:
             for f in sub["files"]:
-                item = QListWidgetItem(f"  {os.path.basename(f)}")
-                item.setToolTip(f)
+                base = f"  {os.path.basename(f)}"
+                if not os.path.exists(f):
+                    item = QListWidgetItem(base + " ❌ (No encontrado)")
+                    item.setForeground(QColor("#dc2626"))
+                    item.setToolTip(f"¡ARCHIVO NO ENCONTRADO!\nRuta: {f}\n\nHaz doble clic para reubicar este archivo.")
+                else:
+                    item = QListWidgetItem(base)
+                    item.setToolTip(f)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(Qt.CheckState.Checked)
                 self.files_lb.addItem(item)
@@ -1512,7 +1513,7 @@ class DesktopApp(QMainWindow):
     def _open_file_location(self, item=None):
         sub = self._sub()
         if not sub or not sub["files"]:
-            self._show_info("Aviso", "No hay archivos en la subsesi\u00f3n seleccionada.")
+            self._show_info("Aviso", "No hay archivos en la subsesión seleccionada.")
             return
         row = self.files_lb.currentRow()
         if row < 0 or row >= len(sub["files"]):
@@ -1520,10 +1521,33 @@ class DesktopApp(QMainWindow):
         filepath = sub["files"][row]
         if os.path.exists(filepath):
             subprocess.run(f'explorer /select,"{os.path.abspath(filepath)}"', shell=True)
-        elif os.path.exists(os.path.dirname(filepath)):
-            os.startfile(os.path.dirname(filepath))
         else:
-            self._show_warning("Archivo no encontrado", f"No se encontr\u00f3 el archivo:\n{filepath}")
+            if self._ask_yes_no(
+                "Archivo no encontrado",
+                f"El archivo ya no existe en la ruta:\n\n{filepath}\n\n¿Deseas buscar y reubicar este archivo ahora mismo?"
+            ):
+                self._relocate_file()
+
+    def _relocate_file(self):
+        sub = self._sub()
+        if not sub or not sub["files"]:
+            self._show_info("Aviso", "No hay archivos en la subsesión seleccionada.")
+            return
+        row = self.files_lb.currentRow()
+        if row < 0 or row >= len(sub["files"]):
+            row = 0
+        filepath = sub["files"][row]
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            f"Reubicar archivo: {os.path.basename(filepath)}",
+            os.path.dirname(filepath) if os.path.exists(os.path.dirname(filepath)) else "",
+            "Word (*.docx);;Todos (*.*)"
+        )
+        if path:
+            sub["files"][row] = path
+            self._save_config()
+            self._refresh_files()
+            self._log(f"Archivo reubicado correctamente: {os.path.basename(path)}")
 
     # ─── add / remove session / sub ────────────────────────────
 
@@ -2003,7 +2027,7 @@ class DesktopApp(QMainWindow):
             dlg.setIcon(QMessageBox.Icon.Information)
         btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
         set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
-        dlg.setStyleSheet(f"QMessageBox {{ background-color: {c['card']}; color: {c['text']}; }} QMessageBox QLabel {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}")
+        dlg.setStyleSheet(f"QMessageBox, QMessageBox QWidget, QMessageBox QFrame, QMessageBox QLabel {{ background-color: {c['card']}; color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; border: none; }}")
         btn.setStyleSheet(f"QPushButton {{ background-color: {c['blue']}; color: #ffffff; border: none; border-radius: 6px; padding: 7px 22px; font-weight: 600; min-width: 75px; }} QPushButton:hover {{ background-color: {c['blue_hover']}; }}")
         dlg.setDefaultButton(btn)
         dlg.exec()
@@ -2020,7 +2044,7 @@ class DesktopApp(QMainWindow):
             dlg.setIcon(QMessageBox.Icon.Warning)
         btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
         set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
-        dlg.setStyleSheet(f"QMessageBox {{ background-color: {c['card']}; color: {c['text']}; }} QMessageBox QLabel {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}")
+        dlg.setStyleSheet(f"QMessageBox, QMessageBox QWidget, QMessageBox QFrame, QMessageBox QLabel {{ background-color: {c['card']}; color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; border: none; }}")
         btn.setStyleSheet(f"QPushButton {{ background-color: {c['blue']}; color: #ffffff; border: none; border-radius: 6px; padding: 7px 22px; font-weight: 600; min-width: 75px; }} QPushButton:hover {{ background-color: {c['blue_hover']}; }}")
         dlg.setDefaultButton(btn)
         dlg.exec()
@@ -2039,7 +2063,7 @@ class DesktopApp(QMainWindow):
         btn_copy = dlg.addButton("Copiar Error", QMessageBox.ButtonRole.ActionRole)
         btn = dlg.addButton("Aceptar", QMessageBox.ButtonRole.AcceptRole)
         set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
-        dlg.setStyleSheet(f"QMessageBox {{ background-color: {c['card']}; color: {c['text']}; }} QMessageBox QLabel {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}")
+        dlg.setStyleSheet(f"QMessageBox, QMessageBox QWidget, QMessageBox QFrame, QMessageBox QLabel {{ background-color: {c['card']}; color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; border: none; }}")
         btn.setStyleSheet(f"QPushButton {{ background-color: {c['red']}; color: #ffffff; border: none; border-radius: 6px; padding: 7px 22px; font-weight: 600; min-width: 75px; }} QPushButton:hover {{ background-color: {c['red_hover']}; }}")
         btn_copy.setStyleSheet(f"QPushButton {{ background-color: transparent; color: {c['text']}; border: 1px solid {c['border']}; border-radius: 6px; padding: 7px 18px; font-weight: 500; }} QPushButton:hover {{ background-color: {c['bg']}; }}")
         dlg.setDefaultButton(btn)
@@ -2063,7 +2087,7 @@ class DesktopApp(QMainWindow):
         c = self._theme_colors()
         set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
         
-        dlg.setStyleSheet(f"QMessageBox {{ background-color: {c['card']}; color: {c['text']}; }} QMessageBox QLabel {{ color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; }}")
+        dlg.setStyleSheet(f"QMessageBox, QMessageBox QWidget, QMessageBox QFrame, QMessageBox QLabel {{ background-color: {c['card']}; color: {c['text']}; font-family: 'Segoe UI'; font-size: 13px; border: none; }}")
         
         yes_btn.setStyleSheet(f"""
             QPushButton {{
@@ -2492,9 +2516,13 @@ class DesktopApp(QMainWindow):
         c3_header_layout.addWidget(c3_title)
         c3_header_layout.addStretch()
 
-        c3_open = self._make_icon_btn("fa5s.folder-open", "btn-icon", "Abrir ubicaci\u00f3n del archivo en el explorador", "text")
+        c3_open = self._make_icon_btn("fa5s.folder-open", "btn-icon", "Abrir ubicación del archivo en el explorador", "text")
         c3_open.clicked.connect(self._open_file_location)
         c3_header_layout.addWidget(c3_open)
+
+        c3_relocate = self._make_icon_btn("fa5s.search-location", "btn-icon", "Reubicar archivo seleccionado...", "blue")
+        c3_relocate.clicked.connect(self._relocate_file)
+        c3_header_layout.addWidget(c3_relocate)
 
         c3_up = self._make_icon_btn("fa5s.chevron-up", "btn-icon", "Subir", "muted")
         c3_up.clicked.connect(lambda: self._move_file(-1))
@@ -2559,10 +2587,20 @@ class DesktopApp(QMainWindow):
 
         # Action panel
         action_side = QWidget()
-        action_side.setFixedWidth(250)
+        action_side.setFixedWidth(220)
         action_layout = QVBoxLayout(action_side)
         action_layout.setContentsMargins(0, 0, 0, 0)
-        action_layout.setSpacing(4)
+        action_layout.setSpacing(6)
+
+        action_label = QLabel("Generaci\u00f3n")
+        action_label.setProperty("class", "muted")
+        action_layout.addWidget(action_label)
+
+        prog_card = QFrame()
+        prog_card.setObjectName("card")
+        prog_card_layout = QVBoxLayout(prog_card)
+        prog_card_layout.setContentsMargins(10, 8, 10, 8)
+        prog_card_layout.setSpacing(4)
 
         prog_header = QWidget()
         prog_header_layout = QHBoxLayout(prog_header)
@@ -2574,47 +2612,37 @@ class DesktopApp(QMainWindow):
         self.progress_lbl = QLabel("0%")
         self.progress_lbl.setProperty("class", "muted")
         prog_header_layout.addWidget(self.progress_lbl)
-        action_layout.addWidget(prog_header)
+        prog_card_layout.addWidget(prog_header)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setValue(0)
-        action_layout.addWidget(self.progress_bar)
+        prog_card_layout.addWidget(self.progress_bar)
 
-        action_layout.addSpacing(8)
-
-        btn_frame = QWidget()
-        btn_layout = QVBoxLayout(btn_frame)
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(6)
-
-        gen_box = QWidget()
-        gen_box_layout = QHBoxLayout(gen_box)
-        gen_box_layout.setContentsMargins(0, 0, 0, 0)
-        
         self.gen_mode_combo = QComboBox()
         self.gen_mode_combo.addItems(["Generar Todo", "Generar Seleccionado", "Generar Actual"])
-        self.gen_mode_combo.setMinimumHeight(40)
-        gen_box_layout.addWidget(self.gen_mode_combo, stretch=1)
+        self.gen_mode_combo.setMinimumHeight(34)
+        self.gen_mode_combo.setMaxVisibleItems(10)
+        prog_card_layout.addWidget(self.gen_mode_combo)
+
+        action_layout.addWidget(prog_card)
 
         self.generate_btn = QPushButton("  GENERAR")
         self.generate_btn.setObjectName("btn-green")
-        self.generate_btn.setMinimumHeight(40)
+        self.generate_btn.setMinimumHeight(44)
         self.generate_btn.clicked.connect(self._generate_all)
         self._reg_icon(self.generate_btn, "fa5s.play", "#ffffff")
-        gen_box_layout.addWidget(self.generate_btn, stretch=1)
-        
-        btn_layout.addWidget(gen_box)
+        action_layout.addWidget(self.generate_btn)
 
         self.stop_btn = QPushButton("  DETENER")
         self.stop_btn.setObjectName("btn-red")
-        self.stop_btn.setMinimumHeight(40)
+        self.stop_btn.setMinimumHeight(44)
         self.stop_btn.clicked.connect(self._stop_generation)
         self.stop_btn.setIcon(_qta().icon("fa5s.stop", color="#ffffff", color_disabled="#ffffff"))
         self.stop_btn.hide()
-        btn_layout.addWidget(self.stop_btn)
+        action_layout.addWidget(self.stop_btn)
 
-        action_layout.addWidget(btn_frame)
+        action_layout.addStretch()
         bottom_inner_layout.addWidget(action_side)
 
         bottom_layout.addWidget(bottom_inner)
@@ -3123,9 +3151,11 @@ class DesktopApp(QMainWindow):
         else:
             self.status.setText(f"Errores ({err})")
             self._set_status_color("#ef4444")
-            sub_word = "subsesi\u00f3n" if err == 1 else "subsesiones"
-            fall_word = "fall\u00f3" if err == 1 else "fallaron"
-            self._show_error("Errores", f"{err} {sub_word} {fall_word}. Revisa el log.")
+            sub_word = "subsesión" if err == 1 else "subsesiones"
+            fall_word = "falló" if err == 1 else "fallaron"
+            error_details = "\n".join([msg for k, msg in data if k == "error"])
+            full_msg = f"{err} {sub_word} {fall_word}:\n\n{error_details}"
+            self._show_error("Errores en la generación", full_msg)
 
     def _cleanup_thread(self):
         self.stop_btn.hide()

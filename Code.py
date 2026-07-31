@@ -16,6 +16,11 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 CM_TO_PT = 28.3465
 
 
+def _open_doc(path):
+    """Abre un .docx con python-docx."""
+    return Document(path)
+
+
 # ─── CONFIGURACIÓN DE GRADOS Y NIVELES ─────────────────────────
 
 GRADES_INFO = {
@@ -54,6 +59,92 @@ def expand_template(template, context):
 # ─── helpers ───────────────────────────────────────────────────
 
 CM_TO_PT = 72.0 / 2.54  # 1 cm = 28.3465 pt
+
+# Patrón de caracteres inválidos en XML 1.0 (se eliminan del texto antes de insertar en XML)
+INVALID_XML_CHARS = re.compile(
+    '[\x00-\x08\x0B\x0C\x0E-\x1F\uFFFE\uFFFF]'
+)
+
+def sanitize_xml_text(text):
+    """Elimina caracteres que XML 1.0 no permite."""
+    if text is None:
+        return None
+    return INVALID_XML_CHARS.sub('', text)
+
+def reorder_sectPr(sectPr):
+    """Reordena los hijos de w:sectPr según el esquema OpenXML (ECMA-376)."""
+    if sectPr is None:
+        return
+    order = [
+        'headerReference', 'footerReference',
+        'footnotePr', 'endnotePr', 'type', 'pgSz', 'pgMar', 'paperSrc',
+        'pgBorders', 'lnNumType', 'cols', 'formProt', 'vAlign', 'noEndnote',
+        'titlePg', 'textDirection', 'bidi', 'rtlGutter', 'docGrid',
+        'printerSettings', 'sectPrChange'
+    ]
+    tag_map = {tag: i for i, tag in enumerate(order)}
+    children = list(sectPr)
+    if not children:
+        return
+
+    def key_fn(elem):
+        t = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+        return tag_map.get(t, 999)
+
+    sorted_children = sorted(children, key=key_fn)
+    if sorted_children != children:
+        for elem in children:
+            sectPr.remove(elem)
+        for elem in sorted_children:
+            sectPr.append(elem)
+
+def sanitize_document_xml(doc):
+    """Limpia todo el contenido textual del documento: elimina caracteres XML inválidos
+    y asegura estructura correcta del body y sectPr según el esquema OpenXML."""
+    if doc is None:
+        return
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    body = doc.element.body
+
+    # Limpiar texto en todos los w:t
+    for t in body.iter(f'{{{wns}}}t'):
+        if t.text:
+            t.text = sanitize_xml_text(t.text)
+        if t.tail:
+            t.tail = sanitize_xml_text(t.tail)
+
+    # Remover w:sectPr de cualquier padre que no sea body (pPr, customXml, etc.)
+    for sectPr in list(body.xpath('.//w:sectPr')):
+        parent = sectPr.getparent()
+        if parent is not None and parent != body:
+            parent.remove(sectPr)
+
+    # Asegurar exactamente 1 w:sectPr al final del body
+    body_sectPrs = body.xpath('w:sectPr')
+    if len(body_sectPrs) > 1:
+        keep = body_sectPrs[-1]
+        for sp in body_sectPrs[:-1]:
+            body.remove(sp)
+
+    # Reordenar hijos del body sectPr según esquema OpenXML
+    body_sectPr = body.find(f'{{{wns}}}sectPr')
+    if body_sectPr is not None:
+        reorder_sectPr(body_sectPr)
+
+    # Reordenar sectPr dentro de otros elementos (paragrafos con sectPr removidos arriba)
+    # También cualquier sectPr en headers, footers etc.
+    for sectPr in body.xpath('.//w:sectPr'):
+        reorder_sectPr(sectPr)
+
+    # Limpiar también headers, footers
+    for sec in doc.sections:
+        for h in [sec.header, sec.first_page_header, sec.footer]:
+            if h is not None:
+                for t in h._element.iter(f'{{{wns}}}t'):
+                    if t.text:
+                        t.text = sanitize_xml_text(t.text)
+                    if t.tail:
+                        t.tail = sanitize_xml_text(t.tail)
 
 
 def get_document_default_font(doc):
@@ -113,6 +204,93 @@ def freeze_subdocument_fonts(doc):
             if szCs is None:
                 szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="{sub_size_val}"/>')
                 rPr.append(szCs)
+
+
+def reorder_pPr(pPr):
+    """Reorders children of a w:pPr element according to strict OpenXML schema specification,
+    and removes any duplicate children of the same tag."""
+    if pPr is None:
+        return
+    order = [
+        'pStyle', 'keepNext', 'keepLines', 'pageBreakBefore', 'framePr',
+        'widowControl', 'numPr', 'suppressLineNumbers', 'pBdr', 'shd',
+        'tabs', 'suppressAutoHyphens', 'kinsoku', 'wordWrap', 'overflowPunct',
+        'topLinePunct', 'autoSpaceDE', 'autoSpaceDN', 'bidi', 'adjustRightInd',
+        'snapToGrid', 'spacing', 'ind', 'contextualSpacing', 'mirrorIndents',
+        'suppressOverlap', 'jc', 'textDirection', 'textAlignment',
+        'textboxTight', 'outlineLvl', 'rPr', 'sectPr', 'pPrChange'
+    ]
+    tag_map = {tag: i for i, tag in enumerate(order)}
+
+    children = list(pPr)
+    if not children:
+        return
+
+    singletons = {'pStyle', 'numPr', 'spacing', 'ind', 'jc', 'rPr', 'sectPr', 'outlineLvl'}
+    seen = {}
+    for elem in children:
+        tag_local = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+        if tag_local in singletons:
+            seen[tag_local] = elem
+
+    for elem in children:
+        tag_local = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+        if tag_local in singletons and seen.get(tag_local) != elem:
+            pPr.remove(elem)
+
+    remaining = list(pPr)
+    def key_fn(elem):
+        t = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+        return tag_map.get(t, 999)
+
+    sorted_children = sorted(remaining, key=key_fn)
+    if sorted_children != remaining:
+        for elem in remaining:
+            pPr.remove(elem)
+        for elem in sorted_children:
+            pPr.append(elem)
+
+
+def _reorder_el(parent):
+    """Reordena hijos de cualquier elemento (rPr, tblPr, tcPr, trPr)
+    alfabéticamente y elimina duplicados del mismo tag."""
+    if parent is None:
+        return
+    children = list(parent)
+    if not children:
+        return
+    seen = {}
+    for elem in children:
+        tag_local = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+        if tag_local not in seen:
+            seen[tag_local] = elem
+        else:
+            parent.remove(elem)
+    remaining = list(parent)
+    sorted_children = sorted(remaining, key=lambda e: e.tag.split('}')[-1] if '}' in e.tag else e.tag)
+    if sorted_children != remaining:
+        for elem in remaining:
+            parent.remove(elem)
+        for elem in sorted_children:
+            parent.append(elem)
+
+
+def normalize_document_xml(doc):
+    """Normalize all w:pPr, w:rPr, w:tblPr, w:tcPr, w:trPr elements
+    across the document body to strictly satisfy OpenXML schema."""
+    if doc is None or not hasattr(doc, 'element'):
+        return
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    for pPr in doc.element.body.xpath('.//w:pPr'):
+        reorder_pPr(pPr)
+    for rPr in doc.element.body.xpath('.//w:rPr'):
+        _reorder_el(rPr)
+    for tblPr in doc.element.body.xpath('.//w:tblPr'):
+        _reorder_el(tblPr)
+    for tcPr in doc.element.body.xpath('.//w:tcPr'):
+        _reorder_el(tcPr)
+    for trPr in doc.element.body.xpath('.//w:trPr'):
+        _reorder_el(trPr)
 
 
 def add_dynamic_page_number_to_footer(paragraph, doc=None):
@@ -189,6 +367,7 @@ def get_all_paragraphs(doc):
 
 def _prepend_run(paragraph, text, bold=False, font_name="Century Gothic", size_pt=11):
     """Add a run at the BEGINNING of the paragraph formatted to Century Gothic 11pt."""
+    text = sanitize_xml_text(text)
     escaped = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     new_r = parse_xml(f'<w:r {nsdecls("w")}><w:t xml:space="preserve">{escaped}</w:t></w:r>')
     first = paragraph._element.find(qn('w:r'))
@@ -453,6 +632,8 @@ def _normalize_case(text):
 
 
 def _add_styled_run(paragraph, text, bold=False, size_pt=11, font_name="Century Gothic"):
+    if not text:
+        return None
     r = paragraph.add_run(text)
     r.bold = bold
     r.font.name = font_name
@@ -469,6 +650,10 @@ def _remove_tabs_from_pPr(p):
         pPr.remove(tabs)
     for t_elem in list(p._element.xpath('.//w:tab')):
         parent = t_elem.getparent()
+        if parent is not None:
+            parent.remove(t_elem)
+
+
 def _ensure_ends_with_period(paragraph):
     text = paragraph.text.strip()
     if text and not text.endswith(('.', ':', ';', '!', '?', ')', ']', '}')):
@@ -698,13 +883,7 @@ def set_single_line_spacing(paragraph):
     sp = pPr.find(qn('w:spacing'))
     if sp is None:
         sp = parse_xml(f'<w:spacing {nsdecls("w")} w:line="240" w:lineRule="auto" w:before="0" w:after="0"/>')
-        ind_elem = pPr.find(qn('w:ind'))
-        numPr_elem = pPr.find(qn('w:numPr'))
-        ref_elem = ind_elem or numPr_elem
-        if ref_elem is not None:
-            ref_elem.addprevious(sp)
-        else:
-            pPr.append(sp)
+        pPr.append(sp)
     else:
         sp.set(qn('w:line'), '240')
         sp.set(qn('w:lineRule'), 'auto')
@@ -713,6 +892,8 @@ def set_single_line_spacing(paragraph):
         for key in ['beforeAutospacing', 'afterAutospacing', 'beforeLines', 'afterLines']:
             if qn(f'w:{key}') in sp.attrib:
                 del sp.attrib[qn(f'w:{key}')]
+
+    reorder_pPr(pPr)
 
 
 def _has_drawing(para_element):
@@ -740,16 +921,16 @@ def inject_list_definitions(doc, start_number=1):
 
     num_xml = num_part.element
     if not num_xml.xpath('w:abstractNum[@w:abstractNumId="9000"]'):
-        # Decimal list abstractNum (Questions)
+        # Decimal list abstractNum (Questions) - strict OpenXML child order inside w:lvl
         abs_dec = parse_xml(f'''
             <w:abstractNum {nsdecls('w')} w:abstractNumId="9000">
                 <w:multiLevelType w:val="hybridMultilevel"/>
                 <w:lvl w:ilvl="0">
                     <w:start w:val="1"/>
                     <w:numFmt w:val="decimal"/>
+                    <w:suff w:val="space"/>
                     <w:lvlText w:val="%1."/>
                     <w:lvlJc w:val="left"/>
-                    <w:suff w:val="space"/>
                     <w:pPr>
                         <w:spacing w:before="0" w:after="0"/>
                         <w:ind w:left="360" w:hanging="360"/>
@@ -771,9 +952,9 @@ def inject_list_definitions(doc, start_number=1):
                 <w:lvl w:ilvl="0">
                     <w:start w:val="1"/>
                     <w:numFmt w:val="upperLetter"/>
+                    <w:suff w:val="space"/>
                     <w:lvlText w:val="%1."/>
                     <w:lvlJc w:val="left"/>
-                    <w:suff w:val="space"/>
                     <w:pPr>
                         <w:spacing w:before="0" w:after="0"/>
                         <w:ind w:left="360" w:hanging="360"/>
@@ -805,6 +986,19 @@ def inject_list_definitions(doc, start_number=1):
             </w:num>
         ''')
         num_xml.append(num_dec)
+
+        # Pre-create numId=9100 as the first option-list container so that
+        # any option paragraph referencing 9100 always finds a valid definition.
+        # Subsequent questions will create 9101, 9102, ... as needed.
+        num_opt_base = parse_xml(f'''
+            <w:num {nsdecls('w')} w:numId="9100">
+                <w:abstractNumId w:val="9001"/>
+                <w:lvlOverride w:ilvl="0">
+                    <w:startOverride w:val="1"/>
+                </w:lvlOverride>
+            </w:num>
+        ''')
+        num_xml.append(num_opt_base)
     else:
         # Update startOverride on existing num 9000
         existing_num = num_xml.xpath('w:num[@w:numId="9000"]')
@@ -822,7 +1016,231 @@ def inject_list_definitions(doc, start_number=1):
                     st_elem = parse_xml(f'<w:startOverride {nsdecls("w")} w:val="{start_number}"/>')
                     lvl_ovr[0].append(st_elem)
 
+        # Ensure numId=9100 (base options container) always exists
+        existing_9100 = num_xml.xpath('w:num[@w:numId="9100"]')
+        if not existing_9100:
+            num_opt_base = parse_xml(f'''
+                <w:num {nsdecls('w')} w:numId="9100">
+                    <w:abstractNumId w:val="9001"/>
+                    <w:lvlOverride w:ilvl="0">
+                        <w:startOverride w:val="1"/>
+                    </w:lvlOverride>
+                </w:num>
+            ''')
+            num_xml.append(num_opt_base)
+
     return True
+
+
+def _strip_header_footer_parts(docx_path):
+    """Elimina del ZIP todos los archivos de header/footer y sus relaciones,
+    para evitar que Word COM detecte corrupción en sub-documentos procesados."""
+    if not os.path.exists(docx_path):
+        return
+    from lxml import etree
+    import zipfile, io
+    rns = 'http://schemas.openxmlformats.org/package/2006/relationships'
+
+    # Leer el ZIP original
+    with zipfile.ZipFile(docx_path, 'r') as zin:
+        all_names = set(zin.namelist())
+        data = {name: zin.read(name) for name in all_names}
+
+    # Identificar archivos de header/footer
+    header_files = [n for n in all_names if ('header' in n.lower() or 'footer' in n.lower()) and n.endswith('.xml') and 'rels' not in n]
+    header_rels_files = [n for n in all_names if ('header' in n.lower() or 'footer' in n.lower()) and n.endswith('.rels')]
+
+    if not header_files and not header_rels_files:
+        return
+
+    # Modificar document.xml.rels para eliminar relaciones de header/footer
+    doc_rels_path = 'word/_rels/document.xml.rels'
+    if doc_rels_path in data:
+        rels_xml = etree.fromstring(data[doc_rels_path])
+        for rel in list(rels_xml.findall(f'{{{rns}}}Relationship')):
+            rtype = rel.get('Type', '')
+            target = rel.get('Target', '')
+            if 'header' in rtype.split('/')[-1] or 'footer' in rtype.split('/')[-1] or 'header' in target or 'footer' in target:
+                rels_xml.remove(rel)
+        data[doc_rels_path] = etree.tostring(rels_xml, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+    # Limpiar [Content_Types].xml de entradas de header/footer
+    ct_path = '[Content_Types].xml'
+    if ct_path in data:
+        ct_xml = etree.fromstring(data[ct_path])
+        ct_ns = 'http://schemas.openxmlformats.org/package/2006/content-types'
+        for ov in list(ct_xml.findall(f'{{{ct_ns}}}Override')):
+            pn = ov.get('PartName', '')
+            for hf in header_files:
+                if hf in pn or ('/' + hf) in pn:
+                    ct_xml.remove(ov)
+                    break
+        data[ct_path] = etree.tostring(ct_xml, xml_declaration=True, encoding='UTF-8', standalone=True)
+
+    # Eliminar header/footer XML y sus .rels del paquete
+    files_to_remove = set(header_files + header_rels_files)
+    for f in files_to_remove:
+        data.pop(f, None)
+
+    # Reconstruir el ZIP
+    with zipfile.ZipFile(docx_path, 'w', zipfile.ZIP_DEFLATED) as zout:
+        for name in sorted(data.keys()):
+            zout.writestr(name, data[name])
+
+
+def _rebuild_zip(docx_path):
+    """Reconstruye el ZIP para eliminar corrupción de compresión/estructura.
+    [Content_Types].xml debe ir primero y sin comprimir según OPC."""
+    if not os.path.exists(docx_path):
+        return
+    tmp_path = docx_path + '.rebuild.zip'
+    try:
+        with zipfile.ZipFile(docx_path, 'r') as zin:
+            names = sorted(zin.namelist())
+            with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as zout:
+                for name in names:
+                    data = zin.read(name)
+                    if name == '[Content_Types].xml':
+                        zout.writestr(zipfile.ZipInfo(name), data, zipfile.ZIP_STORED)
+                    else:
+                        zout.writestr(name, data, zipfile.ZIP_DEFLATED)
+        shutil.move(tmp_path, docx_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            try: os.remove(tmp_path)
+            except: pass
+
+
+def _clean_rsid_attributes(docx_path):
+    """Elimina atributos w:rsidR/w:rsidP/w:rsidRPr que python-docx agrega
+    durante save() y que Word a veces rechaza."""
+    if not os.path.exists(docx_path):
+        return
+    from lxml import etree
+    import zipfile as zf
+    tmp_path = docx_path + '.rsid.zip'
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    rsid_attrs = [
+        f'{{{wns}}}rsidR', f'{{{wns}}}rsidRPr', f'{{{wns}}}rsidP',
+        f'{{{wns}}}rsidRDefault', f'{{{wns}}}rsidSect',
+    ]
+    try:
+        with zf.ZipFile(docx_path, 'r') as zin:
+            data = {name: zin.read(name) for name in zin.namelist()}
+        for xml_name in list(data.keys()):
+            if xml_name.startswith('word/') and not xml_name.startswith('word/_rels/') and xml_name.endswith('.xml'):
+                try:
+                    doc_xml = etree.fromstring(data[xml_name])
+                    for elem in doc_xml.iter():
+                        for attr in rsid_attrs:
+                            if attr in elem.attrib:
+                                del elem.attrib[attr]
+                    for rsids in doc_xml.findall(f'{{{wns}}}rsids'):
+                        rsids.getparent().remove(rsids)
+                    data[xml_name] = etree.tostring(doc_xml, xml_declaration=True,
+                                                     encoding='UTF-8', standalone=True)
+                except Exception:
+                    pass
+        with zf.ZipFile(tmp_path, 'w', zf.ZIP_DEFLATED) as zout:
+            for name in sorted(data.keys()):
+                d = data[name]
+                if name == '[Content_Types].xml':
+                    zout.writestr(zf.ZipInfo(name), d, zf.ZIP_STORED)
+                else:
+                    zout.writestr(name, d, zf.ZIP_DEFLATED)
+        shutil.move(tmp_path, docx_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            try: os.remove(tmp_path)
+            except: pass
+
+
+def _clean_orphaned_header_footer_rels(docx_path):
+    """Elimina del document.xml.rels y del ZIP los headers/footers
+    que no tienen referencia activa en los sectPr del document.xml."""
+    if not os.path.exists(docx_path):
+        return
+    from lxml import etree
+    import zipfile as zf
+    tmp_path = docx_path + '.clean.zip'
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    try:
+        with zf.ZipFile(docx_path, 'r') as zin:
+            names = set(zin.namelist())
+            data = {name: zin.read(name) for name in names}
+
+        # Obtener los IDs de header/footer referenciados en los sectPr
+        doc_xml = etree.fromstring(data['word/document.xml'])
+        active_hf_refs = set()
+        for sectPr in doc_xml.xpath('.//w:sectPr', namespaces={'w': wns}):
+            for ref in sectPr.findall(f'{{{wns}}}headerReference'):
+                rid = ref.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+                if rid:
+                    active_hf_refs.add(rid)
+            for ref in sectPr.findall(f'{{{wns}}}footerReference'):
+                rid = ref.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+                if rid:
+                    active_hf_refs.add(rid)
+
+        # Identificar relaciones de header/footer huérfanas en document.xml.rels
+        doc_rels_path = 'word/_rels/document.xml.rels'
+        rns = 'http://schemas.openxmlformats.org/package/2006/relationships'
+        rels_to_remove = set()
+
+        if doc_rels_path in data:
+            rels_xml = etree.fromstring(data[doc_rels_path])
+            for rel in list(rels_xml.findall(f'{{{rns}}}Relationship')):
+                rtype = rel.get('Type', '')
+                rid = rel.get('Id', '')
+                target = rel.get('Target', '')
+                short_type = rtype.split('/')[-1] if '/' in rtype else rtype
+                if short_type in ('header', 'footer') and rid not in active_hf_refs:
+                    rels_to_remove.add(rid)
+                    target_path = 'word/' + target.lstrip('/')
+                    if target_path in data:
+                        data.pop(target_path, None)
+                    rels_xml.remove(rel)
+            data[doc_rels_path] = etree.tostring(rels_xml, xml_declaration=True,
+                                                  encoding='UTF-8', standalone=True)
+
+        # Limpiar [Content_Types].xml SOLO de los headers/footers eliminados
+        ct_path = '[Content_Types].xml'
+        if ct_path in data:
+            ct_xml = etree.fromstring(data[ct_path])
+            ct_ns = 'http://schemas.openxmlformats.org/package/2006/content-types'
+            removed_filenames = set()
+            for ov in list(ct_xml.findall(f'{{{ct_ns}}}Override')):
+                pn = ov.get('PartName', '').lstrip('/')
+                if ('/header' in pn or '/footer' in pn) and pn not in data:
+                    ct_xml.remove(ov)
+            data[ct_path] = etree.tostring(ct_xml, xml_declaration=True,
+                                            encoding='UTF-8', standalone=True)
+
+        # Reconstruir ZIP limpio
+        with zf.ZipFile(tmp_path, 'w', zf.ZIP_DEFLATED) as zout:
+            for name in sorted(data.keys()):
+                d = data[name]
+                if name == '[Content_Types].xml':
+                    zout.writestr(zf.ZipInfo(name), d, zf.ZIP_STORED)
+                else:
+                    zout.writestr(name, d, zf.ZIP_DEFLATED)
+        shutil.move(tmp_path, docx_path)
+    except Exception:
+        if os.path.exists(tmp_path):
+            try: os.remove(tmp_path)
+            except: pass
+
+
+def _ensure_sectPr_is_last(doc):
+    """Mueve w:sectPr al final del body si no lo está ya (requisito OpenXML)."""
+    if doc is None or not hasattr(doc, 'element'):
+        return
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    body = doc.element.body
+    body_sectPr = body.find(f'{{{wns}}}sectPr')
+    if body_sectPr is not None and list(body)[-1] != body_sectPr:
+        body.remove(body_sectPr)
+        body.append(body_sectPr)
 
 
 def strip_leading_tabs(para):
@@ -839,15 +1257,17 @@ def strip_leading_tabs(para):
 
 def apply_native_lists_to_final_doc(final_doc, start_offset=0):
     start_num = start_offset + 1
-    inject_list_definitions(final_doc, start_number=start_num)
-    q_num_id = 9000
-    o_num_id_base = 9100
-    o_num_id = o_num_id_base
-    
+    if inject_list_definitions(final_doc, start_number=start_num) is None:
+        return
     try:
         num_xml = final_doc.part.numbering_part.element
     except (NotImplementedError, AttributeError):
-        num_xml = None
+        return
+    if num_xml is None:
+        return
+    q_num_id = 9000
+    o_num_id_base = 9100
+    o_num_id = o_num_id_base
         
     paras = get_all_paragraphs(final_doc)
     for p in paras:
@@ -870,6 +1290,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
             pPr.append(numPr)
             ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="360"/>')
             pPr.append(ind_elem)
+            reorder_pPr(pPr)
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             strip_leading_tabs(p)
             _ensure_ends_with_period(p)
@@ -890,6 +1311,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
             pPr.append(numPr)
             ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="360"/>')
             pPr.append(ind_elem)
+            reorder_pPr(pPr)
             p.alignment = WD_ALIGN_PARAGRAPH.LEFT
             strip_leading_tabs(p)
             
@@ -906,6 +1328,40 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
                 ''')
                 num_xml.append(new_num)
             continue
+
+
+def _fix_numbering_level_fonts(doc, font_name="Century Gothic"):
+    """Fix fonts in numbering.xml levels safely without breaking bullet/symbol levels."""
+    try:
+        if hasattr(doc.part, 'numbering_part') and doc.part.numbering_part is not None:
+            wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+            num_xml = doc.part.numbering_part.element
+            for lvl in num_xml.xpath('.//w:lvl'):
+                numFmt = lvl.find(f'{{{wns}}}numFmt')
+                fmt_val = (numFmt.get(qn('w:val')) if numFmt is not None else '').lower()
+                lvlText = lvl.find(f'{{{wns}}}lvlText')
+                t_val = lvlText.get(qn('w:val')) if lvlText is not None else ''
+
+                if fmt_val in ('bullet', 'none') or any(ord(c) >= 0xF000 or c in '•·–—□▪' for c in t_val):
+                    continue
+
+                rPr = lvl.find(f'{{{wns}}}rPr')
+                if rPr is None:
+                    continue
+
+                rFonts = rPr.find(f'{{{wns}}}rFonts')
+                if rFonts is not None:
+                    ascii_f = (rFonts.get(qn('w:ascii')) or '').lower()
+                    if any(s in ascii_f for s in ['symbol', 'wingdings', 'webdings', 'marlett', 'dingbats']):
+                        continue
+                    rFonts.set(qn('w:ascii'), font_name)
+                    rFonts.set(qn('w:hAnsi'), font_name)
+                    rFonts.set(qn('w:cs'), font_name)
+                    for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
+                        if qn(theme_attr) in rFonts.attrib:
+                            del rFonts.attrib[qn(theme_attr)]
+    except Exception:
+        pass
 
 
 def apply_formatting_to_document(doc):
@@ -925,7 +1381,6 @@ def apply_formatting_to_document(doc):
             else:
                 para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             
-        # Do not strip numPr globally so native bullets are preserved!
         format_paragraph(para, doc)
         set_single_line_spacing(para)
         strip_leading_tabs(para)
@@ -933,9 +1388,26 @@ def apply_formatting_to_document(doc):
         if is_comp:
             para.alignment = WD_ALIGN_PARAGRAPH.LEFT
         
-        # If paragraph is empty (a line break / empty spacing line), ensure it has a run with 11pt font so height is uniform
-        if not para.runs and not _has_drawing(p_elem):
-            _add_styled_run(para, "", bold=False, size_pt=11, font_name=font_name)
+        # Empty separator lines: force 2pt (w:val="4") for paper saving per AGENTS.md rule
+        if not para.text.strip() and not _has_drawing(p_elem):
+            wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+            for r_elem in p_elem.xpath('.//w:r'):
+                rPr = r_elem.find(f'{{{wns}}}rPr')
+                if rPr is None:
+                    rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
+                    r_elem.insert(0, rPr)
+                sz = rPr.find(f'{{{wns}}}sz')
+                if sz is None:
+                    sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="4"/>')
+                    rPr.append(sz)
+                else:
+                    sz.set(qn('w:val'), '4')
+                szCs = rPr.find(f'{{{wns}}}szCs')
+                if szCs is None:
+                    szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="4"/>')
+                    rPr.append(szCs)
+                else:
+                    szCs.set(qn('w:val'), '4')
 
     # Format all runs in the document BODY XML (excluding headers/footers)
     wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
@@ -945,7 +1417,6 @@ def apply_formatting_to_document(doc):
             rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
             r_elem.insert(0, rPr)
         
-        # Set font name
         rFonts = rPr.find(f'{{{wns}}}rFonts')
         if rFonts is None:
             rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
@@ -960,7 +1431,6 @@ def apply_formatting_to_document(doc):
                     if qn(theme_attr) in rFonts.attrib:
                         del rFonts.attrib[qn(theme_attr)]
 
-        # Set font size to 11pt (22 in half-points)
         sz = rPr.find(f'{{{wns}}}sz')
         if sz is None:
             sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="22"/>')
@@ -975,46 +1445,7 @@ def apply_formatting_to_document(doc):
         else:
             szCs.set(qn('w:val'), '22')
 
-    # Ensure 100% of list bullets and list numbers in numbering.xml are Century Gothic 11pt
-    try:
-        if hasattr(doc.part, 'numbering_part') and doc.part.numbering_part is not None:
-            num_xml = doc.part.numbering_part.element
-            for lvl in num_xml.xpath('.//w:lvl'):
-                numFmt = lvl.find(f'{{{wns}}}numFmt')
-                if numFmt is not None and numFmt.get(qn('w:val')) == 'bullet':
-                    continue
-                rPr = lvl.find(f'{{{wns}}}rPr')
-                if rPr is None:
-                    rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
-                    lvl.append(rPr)
-                
-                rFonts = rPr.find(f'{{{wns}}}rFonts')
-                if rFonts is None:
-                    rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
-                    rPr.append(rFonts)
-                else:
-                    rFonts.set(qn('w:ascii'), font_name)
-                    rFonts.set(qn('w:hAnsi'), font_name)
-                    rFonts.set(qn('w:cs'), font_name)
-                    for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
-                        if qn(theme_attr) in rFonts.attrib:
-                            del rFonts.attrib[qn(theme_attr)]
-                    
-                sz = rPr.find(f'{{{wns}}}sz')
-                if sz is None:
-                    sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="22"/>')
-                    rPr.append(sz)
-                else:
-                    sz.set(qn('w:val'), '22')
-                    
-                szCs = rPr.find(f'{{{wns}}}szCs')
-                if szCs is None:
-                    szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="22"/>')
-                    rPr.append(szCs)
-                else:
-                    szCs.set(qn('w:val'), '22')
-    except Exception:
-        pass
+    _fix_numbering_level_fonts(doc, font_name)
 
 
 def _safe_remove_para(p):
@@ -1064,12 +1495,12 @@ def replace_xml_text(elements_list, replacements):
             if t.text:
                 for k, v in replacements.items():
                     if k in t.text:
-                        t.text = t.text.replace(k, str(v))
+                        t.text = sanitize_xml_text(t.text.replace(k, str(v)))
         for t in el.iter(f'{{{dns}}}t'):
             if t.text:
                 for k, v in replacements.items():
                     if k in t.text:
-                        t.text = t.text.replace(k, str(v))
+                        t.text = sanitize_xml_text(t.text.replace(k, str(v)))
 
 
 def count_questions_in_doc(doc):
@@ -1260,7 +1691,7 @@ def _format_bullet_item_clean(p):
 
         if body_text:
             c_text = _normalize_case(body_text)
-            if not c_text.endswith(('.', ':', ';', '!', '?', ')', ']')):
+            if c_text and not c_text.endswith(('.', ':', ';', '!', '?', ')', ']')):
                 c_text += '.'
 
             rPr_xml = None
@@ -1291,10 +1722,11 @@ def _format_bullet_item_clean(p):
                     if any(s in a_font.lower() for s in ['symbol', 'wingdings', 'webdings', 'marlett']):
                         r1.font.name = a_font
 
-            r2 = p.add_run(c_text)
-            r2.bold = False
-            r2.font.name = "Century Gothic"
-            r2.font.size = Pt(11)
+            if c_text:
+                r2 = p.add_run(c_text)
+                r2.bold = False
+                r2.font.name = "Century Gothic"
+                r2.font.size = Pt(11)
 
 
 def process_habilidades_and_bullets(doc):
@@ -1362,10 +1794,7 @@ def process_competencias_and_componentes(doc):
     # Step 0: Extraer Competencia/Componente atrapados en tablas a párrafos normales libres
     convert_competencia_tables_to_paragraphs(doc)
 
-    # Step 0.1: Mover Competencia / Componente / Habilidad / Nivel ANTES del enunciado de la pregunta si venían abajo
-    reorder_competencia_before_question(doc)
-
-    # Step 0.5: Dividir si vienen pegados en la misma línea
+    # Step 0.1: Dividir si vienen pegados en la misma línea
     split_inline_competencia_and_componente(doc)
 
     all_paras = get_all_paragraphs(doc)
@@ -1480,11 +1909,12 @@ def ensure_proper_spacing_between_questions(doc):
     while i < len(all_paras) - 1:
         p1 = all_paras[i]
         p2 = all_paras[i + 1]
-        if not p1.text.strip() and not _has_drawing(p1._element) and not p2.text.strip() and not _has_drawing(p2._element):
-            _safe_remove_para(p1)
-            all_paras = get_all_paragraphs(doc)
-        else:
-            i += 1
+        if p1._element.getparent() == doc.element.body and p2._element.getparent() == doc.element.body:
+            if not p1.text.strip() and not _has_drawing(p1._element) and not p2.text.strip() and not _has_drawing(p2._element):
+                _safe_remove_para(p1)
+                all_paras = get_all_paragraphs(doc)
+                continue
+        i += 1
 
     # 2. Eliminar cualquier línea en blanco entre PART X, Competencia, Componente y el enunciado de la pregunta
     all_paras = get_all_paragraphs(doc)
@@ -1523,6 +1953,22 @@ def ensure_proper_spacing_between_questions(doc):
                     break
         i += 1
 
+    # 3.5 Eliminar línea en blanco entre el enunciado de la pregunta y la primera opción (A, B, C, D)
+    all_paras = get_all_paragraphs(doc)
+    i = 0
+    while i < len(all_paras) - 1:
+        p = all_paras[i]
+        if bool(re.match(r'^\s*\d+[\.\)]', p.text.strip())):
+            np = all_paras[i + 1]
+            np_text = np.text.strip()
+            if not np_text and not _has_drawing(np._element):
+                nnp = all_paras[i + 2] if i + 2 < len(all_paras) else None
+                if nnp and bool(re.match(r'^\s*[\(\[\{]?([a-eA-E])\s*[\.\)\]\}\-\:\/]', nnp.text.strip())):
+                    _safe_remove_para(np)
+                    all_paras = get_all_paragraphs(doc)
+                    continue
+        i += 1
+
     # 4. Garantizar exactamente 1 línea en blanco al terminar una pregunta/opciones antes del nuevo bloque
     all_paras = get_all_paragraphs(doc)
     i = 0
@@ -1552,27 +1998,189 @@ def ensure_proper_spacing_between_questions(doc):
 
 def _merge_docx_with_rels(master_doc, sub_doc, add_break=False):
     rel_map = {}
-    for rel_id, rel in sub_doc.part.rels.items():
-        if "image" in rel.target_ref or "hyperlink" in rel.target_ref:
+    master_pkg = master_doc.part.package
+    existing_parts = {part.partname: part for part in master_pkg.iter_parts()}
+    existing_part_names = set(existing_parts.keys())
+
+    for rel_id, rel in list(sub_doc.part.rels.items()):
+        if "image" in rel.target_ref:
             try:
-                new_rel_id = master_doc.part.relate_to(rel.target_part, rel.reltype)
+                part = rel.target_part
+                if part.partname in existing_part_names:
+                    from docx.parts.image import ImagePart
+                    ext = part.partname.ext
+                    new_name = master_pkg.next_partname('/word/media/image%%d.%s' % ext)
+                    new_part = ImagePart.from_image(part.image, new_name)
+                    new_rel_id = master_doc.part.relate_to(new_part, rel.reltype)
+                    existing_parts[new_name] = new_part
+                    existing_part_names.add(new_name)
+                else:
+                    new_rel_id = master_doc.part.relate_to(part, rel.reltype)
+                    existing_parts[part.partname] = part
+                    existing_part_names.add(part.partname)
                 rel_map[rel_id] = new_rel_id
+            except Exception as e:
+                print(f"[GESA] Error mapeando imagen {rel_id}: {e}")
+        elif "hyperlink" in rel.target_ref:
+            try:
+                target_part = rel.target_part
+                if target_part is not None and target_part.partname is not None:
+                    new_rel_id = master_doc.part.relate_to(target_part, rel.reltype)
+                    rel_map[rel_id] = new_rel_id
             except Exception:
                 pass
+
+    # ── Merge numbering definitions from sub_doc into master_doc ──────────
+    # This prevents orphaned numId references that cause "contenido ilegible".
+    _merge_numbering(master_doc, sub_doc)
+
+    # CRITICAL: Insert elements BEFORE the body's sectPr, not after it.
+    # OpenXML spec requires sectPr to be the LAST element of body.
+    # body.append() would push elements after sectPr, corrupting the file.
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    body = master_doc.element.body
+    body_sectPr = body.find(f'{{{wns}}}sectPr')
 
     for element in sub_doc.element.body:
         if element.tag.endswith('sectPr'):
             continue
         new_elem = copy.deepcopy(element)
         if rel_map:
+            unmapped_embeds = set()
             for r_elem in new_elem.xpath('.//*[@r:embed]'):
                 old_embed = r_elem.get(qn('r:embed'))
                 if old_embed in rel_map:
                     r_elem.set(qn('r:embed'), rel_map[old_embed])
-        master_doc.element.body.append(new_elem)
+                else:
+                    unmapped_embeds.add(old_embed)
+                    r_elem.attrib.pop(qn('r:embed'), None)
+            if unmapped_embeds:
+                for r_elem in list(new_elem.iter()):
+                    if r_elem.tag.endswith('}r') or r_elem.tag == 'r':
+                        drawing = r_elem.find(qn('w:drawing'))
+                        if drawing is not None:
+                            embeds_in_drawing = set()
+                            for emb_elem in drawing.xpath('.//*[@r:embed]'):
+                                embeds_in_drawing.add(emb_elem.get(qn('r:embed')))
+                            if embeds_in_drawing and embeds_in_drawing.issubset(unmapped_embeds):
+                                r_elem.getparent().remove(r_elem)
+        if body_sectPr is not None:
+            body_sectPr.addprevious(new_elem)
+        else:
+            body.append(new_elem)
 
     if add_break:
-        master_doc.add_page_break()
+        # Also insert the page break before sectPr
+        if body_sectPr is not None:
+            br_p = parse_xml(f'<w:p {nsdecls("w")}><w:r><w:br w:type="page"/></w:r></w:p>')
+            body_sectPr.addprevious(br_p)
+        else:
+            master_doc.add_page_break()
+
+
+def _merge_numbering(master_doc, sub_doc):
+    """Transfer all abstractNum and num definitions from sub_doc to master_doc,
+    remapping IDs to avoid collisions. Updates numId references in sub_doc body
+    before the elements are copied over."""
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+
+    try:
+        sub_num_part = sub_doc.part.numbering_part
+        if sub_num_part is None:
+            return
+        sub_num_xml = sub_num_part.element
+    except (NotImplementedError, AttributeError):
+        return
+
+    try:
+        master_num_part = master_doc.part.numbering_part
+        if master_num_part is None:
+            return
+        master_num_xml = master_num_part.element
+    except (NotImplementedError, AttributeError):
+        return
+
+    # Find highest existing IDs in master to avoid collision
+    existing_abs_ids = set()
+    for an in master_num_xml.findall(f'{{{wns}}}abstractNum'):
+        aid = an.get(qn('w:abstractNumId'))
+        if aid is not None:
+            try: existing_abs_ids.add(int(aid))
+            except: pass
+
+    existing_num_ids = set()
+    for n in master_num_xml.findall(f'{{{wns}}}num'):
+        nid = n.get(qn('w:numId'))
+        if nid is not None:
+            try: existing_num_ids.add(int(nid))
+            except: pass
+
+    GESA_RESERVED_LOWER = 9000
+    GESA_RESERVED_UPPER = 9999
+
+    max_abs_id = max(existing_abs_ids, default=0)
+    max_num_id = max(existing_num_ids, default=0)
+
+    if max_abs_id >= GESA_RESERVED_LOWER and max_abs_id < GESA_RESERVED_UPPER:
+        max_abs_id = GESA_RESERVED_UPPER
+    if max_num_id >= GESA_RESERVED_LOWER and max_num_id < GESA_RESERVED_UPPER:
+        max_num_id = GESA_RESERVED_UPPER
+
+    # Build mapping: old sub_doc abstractNumId → new ID in master
+    abs_id_map = {}
+    for an in sub_num_xml.findall(f'{{{wns}}}abstractNum'):
+        old_id = an.get(qn('w:abstractNumId'))
+        if old_id is None:
+            continue
+        old_id_int = int(old_id)
+        max_abs_id += 1
+        new_id = max_abs_id
+        abs_id_map[old_id_int] = new_id
+
+        new_an = copy.deepcopy(an)
+        new_an.set(qn('w:abstractNumId'), str(new_id))
+        # Insert before the first w:num in master (abstractNums must precede nums)
+        first_num = master_num_xml.find(f'{{{wns}}}num')
+        if first_num is not None:
+            first_num.addprevious(new_an)
+        else:
+            master_num_xml.append(new_an)
+
+    # Build mapping: old sub_doc numId → new ID in master
+    num_id_map = {}
+    for n in sub_num_xml.findall(f'{{{wns}}}num'):
+        old_nid = n.get(qn('w:numId'))
+        if old_nid is None:
+            continue
+        old_nid_int = int(old_nid)
+        max_num_id += 1
+        new_nid = max_num_id
+        num_id_map[old_nid_int] = new_nid
+
+        new_n = copy.deepcopy(n)
+        new_n.set(qn('w:numId'), str(new_nid))
+        # Update abstractNumId reference inside the num element
+        abs_ref = new_n.find(f'{{{wns}}}abstractNumId')
+        if abs_ref is not None:
+            old_abs_ref = abs_ref.get(qn('w:val'))
+            if old_abs_ref is not None:
+                mapped = abs_id_map.get(int(old_abs_ref))
+                if mapped is not None:
+                    abs_ref.set(qn('w:val'), str(mapped))
+        master_num_xml.append(new_n)
+
+    # Now update all numId references in the sub_doc body XML
+    if num_id_map:
+        for numId_elem in sub_doc.element.body.xpath('.//w:numId'):
+            old_val = numId_elem.get(qn('w:val'))
+            if old_val is not None:
+                try:
+                    old_int = int(old_val)
+                    if old_int in num_id_map:
+                        numId_elem.set(qn('w:val'), str(num_id_map[old_int]))
+                except (ValueError, TypeError):
+                    pass
+
 
 
 def strip_leading_empty_paras_and_breaks(doc):
@@ -1623,6 +2231,17 @@ def strip_section_breaks(doc):
 # ── MAIN MERGE ───────────────────────────────────────────────
 
 def merge_docx_with_guaranteed_header(template_path, file_list, output_path, config_data, start_offset=0, stop_check=None):
+    try:
+        return _merge_impl(template_path, file_list, output_path, config_data, start_offset, stop_check)
+    except Exception:
+        import traceback
+        tb = traceback.format_exc()
+        raise RuntimeError(
+            f"Error en merge_docx_with_guaranteed_header:\n{tb}"
+        )
+
+
+def _merge_impl(template_path, file_list, output_path, config_data, start_offset=0, stop_check=None):
     grade_top = config_data.get('grade', config_data.get('grade_clean', ''))
     p_c_val = config_data.get('p_c_value', grade_top)
     replacements_map = {
@@ -1648,6 +2267,8 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         if title_template.startswith("Evaluación de") or title_template.startswith("Evaluaciones de"):
             title_template = re.sub(r'^Evaluaci\u00f3n(es)?\s+de', f'{eval_prefix} de', title_template)
 
+    expanded_title = expand_template(title_template, title_context)
+
     # ── Pre-process each sub-doc ───────────────────────────────
     cur = start_offset + 1
     tmp_dir = tempfile.mkdtemp(prefix='gesa_sub_')
@@ -1655,7 +2276,12 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
     for fp in file_list:
         if not os.path.exists(fp):
             continue
-        sd = Document(fp)
+        sd = _open_doc(fp)
+        # Fix common misspellings in text before processing
+        for p in get_all_paragraphs(sd):
+            for run in p.runs:
+                if 'ompontencia' in run.text.lower() or 'ompeyencia' in run.text.lower():
+                    run.text = re.sub(r'Compontencia|Compeyencia', 'Competencia', run.text, flags=re.IGNORECASE)
         strip_leading_empty_paras_and_breaks(sd)
         strip_section_breaks(sd)
         _resolve_autonumbering(sd)
@@ -1681,7 +2307,10 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
                 pass
 
         tp = os.path.join(tmp_dir, os.path.basename(fp) + '.tmp.docx')
+        normalize_document_xml(sd)
+        sanitize_document_xml(sd)
         sd.save(tp)
+        _rebuild_zip(tp)
         temp_subs.append(tp)
 
     if not temp_subs:
@@ -1689,7 +2318,17 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         raise RuntimeError('No hay sub-documentos para procesar.')
 
     # ── Pre-process template: replace placeholders everywhere ──
-    tpl = Document(template_path)
+    tpl = _open_doc(template_path)
+    try:
+        import datetime
+        now = datetime.datetime.utcnow()
+        tpl.core_properties.created = now
+        tpl.core_properties.modified = now
+        tpl.core_properties.last_modified_by = "GESA"
+        tpl.core_properties.author = "GESA"
+        tpl.core_properties.revision = 1
+    except Exception as e:
+        print(f"[GESA] No se pudieron actualizar los metadatos de tpl: {e}")
     replace_in_all(tpl, replacements_map)
     for sec in tpl.sections:
         force_single_column(sec)
@@ -1730,35 +2369,196 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
     sentinel_p = parse_xml(
         f'<w:p {nsdecls("w")}><w:r><w:rPr><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:sz w:val="2"/><w:szCs w:val="2"/><w:color w:val="FFFFFF"/></w:rPr><w:t xml:space="preserve">{_SENTINEL_TEXT}</w:t></w:r></w:p>'
     )
-    tpl.element.body.append(sentinel_p)
+    # Insertar el sentinel ANTES del sectPr (sectPr debe ser el último hijo del body)
+    body_sectPr_ = tpl.element.body.find(f'{{{wns}}}sectPr')
+    if body_sectPr_ is not None:
+        body_sectPr_.addprevious(sentinel_p)
+    else:
+        tpl.element.body.append(sentinel_p)
 
     prepped = os.path.join(tmp_dir, 'template_prepped.docx')
+    normalize_document_xml(tpl)
+    sanitize_document_xml(tpl)
+    _ensure_sectPr_is_last(tpl)
     tpl.save(prepped)
+    _rebuild_zip(prepped)
 
+    # ── Word COM: merge + post-process + guardado final ────────
+    # (evita el guardado de python-docx que introduce defectos XML)
+    word = None
+    doc = None
+    try:
+        import win32com.client as win32
+        word = win32.DispatchEx('Word.Application')
+        word.Visible = False
+        word.DisplayAlerts = False
+        time.sleep(0.3)
+
+        doc = word.Documents.Open(
+            os.path.abspath(prepped),
+            ConfirmConversions=False, ReadOnly=False,
+            AddToRecentFiles=False)
+        time.sleep(0.2)
+
+        for i, tp in enumerate(temp_subs):
+            rng = doc.Range()
+            rng.Collapse(0)
+            rng.InsertFile(os.path.abspath(tp), ConfirmConversions=False)
+            if i < len(temp_subs) - 1:
+                rng = doc.Range()
+                rng.Collapse(0)
+                rng.InsertBreak(2)
+
+        for s_idx in range(1, doc.Sections.Count + 1):
+            try:
+                doc.Sections(s_idx).PageSetup.TextColumns.SetCount(1)
+            except:
+                pass
+
+        try:
+            doc.Content.Find.ClearFormatting()
+            for k, v in replacements_map.items():
+                doc.Content.Find.Execute(FindText=k, ReplaceWith=str(v), Replace=2)
+        except:
+            pass
+        for i in range(1, doc.Shapes.Count + 1):
+            try:
+                shape = doc.Shapes.Item(i)
+                if shape.Type == 6:
+                    for j in range(1, shape.GroupItems.Count + 1):
+                        try:
+                            gi = shape.GroupItems.Item(j)
+                            if gi.TextFrame.HasText:
+                                gi.TextFrame.TextRange.Find.ClearFormatting()
+                                for k, v in replacements_map.items():
+                                    gi.TextFrame.TextRange.Find.Execute(
+                                        FindText=k, ReplaceWith=str(v), Replace=2)
+                        except:
+                            pass
+                elif shape.TextFrame.HasText:
+                    shape.TextFrame.TextRange.Find.ClearFormatting()
+                    for k, v in replacements_map.items():
+                        shape.TextFrame.TextRange.Find.Execute(
+                            FindText=k, ReplaceWith=str(v), Replace=2)
+            except:
+                pass
+
+        # ── Post-process in Word COM (evita guardado de python-docx) ──
+        # Forzar Century Gothic 11pt en contenido de subdocumentos
+        try:
+            fr = doc.Range()
+            fr.Find.Text = _SENTINEL_TEXT
+            if fr.Find.Execute():
+                content_range = doc.Range(fr.End, doc.Content.End)
+                content_range.Font.Name = "Century Gothic"
+                content_range.Font.Size = 11
+                fr.Text = ""
+        except:
+            pass
+        # Pie de página con número de página
+        try:
+            if doc.Sections.Count > 0:
+                ft = doc.Sections(1).Footers(1)
+                ft.Range.Font.Name = "Century Gothic"
+                ft.Range.Font.Size = 11
+                ft.PageNumbers.Add(PageNumberAlignment=2)
+        except:
+            pass
+        # Ajustar márgenes de página
+        try:
+            ps = doc.PageSetup
+            ps.TopMargin = 0.3937 * 72
+            ps.BottomMargin = 0.3937 * 72
+            ps.LeftMargin = 0.3937 * 72
+            ps.RightMargin = 0.3937 * 72
+        except:
+            pass
+
+        # Actualizar metadatos en Word COM
+        try:
+            doc.BuiltInDocumentProperties("Title").Value = expanded_title
+            doc.BuiltInDocumentProperties("Category").Value = f"{eval_prefix} de Suficiencia Académica"
+            doc.BuiltInDocumentProperties("Author").Value = "GESA"
+        except Exception as e:
+            print(f"[GESA] Word COM no pudo establecer propiedades: {e}")
+
+        # Guardar a TEMPORAL LOCAL (OneDrive/cloud bloquean archivos en uso)
+        tmp_word = os.path.join(tmp_dir, 'gesa_word.docx')
+        doc.SaveAs2(os.path.abspath(tmp_word), FileFormat=12, AddToRecentFiles=False)
+        doc.Close(False)
+        doc = None
+        word.Quit()
+        word = None
+        time.sleep(0.3)
+
+        # Copiar a destino (OneDrive ya no interfiere con Word COM)
+        if os.path.exists(output_path):
+            for _ in range(10):
+                try:
+                    os.remove(output_path)
+                    break
+                except:
+                    time.sleep(0.3)
+        shutil.copy2(tmp_word, output_path)
+        os.remove(tmp_word)
+
+        # Limpiar posibles archivos de bloqueo en el destino
+        lock_file = os.path.join(os.path.dirname(output_path), '~$' + os.path.basename(output_path))
+        if os.path.exists(lock_file):
+            try: os.remove(lock_file)
+            except: pass
+
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        print(f"[GESA] Word COM exitoso: {os.path.basename(output_path)}")
+        return cur - 1
+    except Exception as ex:
+        print(f"[GESA] Word COM fallo en merge: {ex}")
+    finally:
+        if doc is not None:
+            try: doc.Close(False)
+            except: pass
+        if word is not None:
+            try: word.Quit()
+            except: pass
+        doc = None
+        word = None
+
+    # ── Fallback: python-docx merge + post-process ────────────
+    print(f"[GESA] Word COM no disponible, usando python-docx: {os.path.basename(output_path)}")
     merged_path = os.path.join(tmp_dir, 'word_merged.docx')
 
-    # ── Merge sub-documents cleanly (0 section breaks) ─────────
-    final_doc = Document(prepped)
+    final_doc = _open_doc(prepped)
     for i, tp in enumerate(temp_subs):
         if stop_check is not None and stop_check():
             raise RuntimeError("Cancelado por el usuario.")
-        sub_doc = Document(tp)
+        sub_doc = _open_doc(tp)
         _merge_docx_with_rels(final_doc, sub_doc, add_break=(i < len(temp_subs) - 1))
-
-    strip_section_breaks(final_doc)
+    normalize_document_xml(final_doc)
+    sanitize_document_xml(final_doc)
+    _ensure_sectPr_is_last(final_doc)
     final_doc.save(merged_path)
+    _rebuild_zip(merged_path)
 
     # ── Post-process (python-docx) ──────────────────────────────
-    final = Document(merged_path)
+    final = _open_doc(merged_path)
     strip_section_breaks(final)
     process_competencias_and_componentes(final)
     process_habilidades_and_bullets(final)
-    reorder_competencia_before_question(final)
     ensure_proper_spacing_between_questions(final)
     expanded_title = expand_template(title_template, title_context)
     final.core_properties.title = expanded_title
     final.core_properties.category = f"{eval_prefix} de Suficiencia Académica"
     final.core_properties.content_status = config_data.get('period', '')
+    try:
+        import datetime
+        now = datetime.datetime.utcnow()
+        final.core_properties.created = now
+        final.core_properties.modified = now
+        final.core_properties.last_modified_by = "GESA"
+        final.core_properties.author = "GESA"
+        final.core_properties.revision = 1
+    except Exception as e:
+        print(f"[GESA] No se pudieron actualizar los metadatos de final: {e}")
 
     for idx, sec in enumerate(final.sections):
         if idx == 0:
@@ -1837,13 +2637,29 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
 
     if sentinel_idx is not None:
         try:
-            body_children[sentinel_idx].getparent().remove(body_children[sentinel_idx])
+            s_elem = body_children[sentinel_idx]
+            for t in s_elem.xpath('.//w:t'):
+                t.text = (t.text or '').replace(_SENTINEL_TEXT, '')
+            s_elem.getparent().remove(s_elem)
         except Exception:
             pass
         body_children = list(final.element.body)
         subdoc_elems = body_children[sentinel_idx:]
     else:
         subdoc_elems = []
+
+    # Safety: remove any leftover fragments containing sentinel text
+    for t in final.element.body.xpath(f'.//w:t[contains(text(), "{_SENTINEL_TEXT}")]'):
+        t.text = (t.text or '').replace(_SENTINEL_TEXT, '')
+    for p_elem in final.element.body.xpath('.//w:p'):
+        text_content = ''.join(t.text or '' for t in p_elem.xpath('.//w:t'))
+        if _SENTINEL_TEXT in text_content:
+            try:
+                t_elem = p_elem.xpath(f'.//w:t[contains(text(), "{_SENTINEL_TEXT}")]')
+                if t_elem:
+                    t_elem[0].text = (t_elem[0].text or '').replace(_SENTINEL_TEXT, '')
+            except Exception:
+                pass
 
     from docx.text.paragraph import Paragraph as _Paragraph
     for elem in subdoc_elems:
@@ -1857,46 +2673,10 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
             is_bul = is_bullet_paragraph(para)
             if not _has_drawing(elem):
                 para.alignment = WD_ALIGN_PARAGRAPH.LEFT if (is_comp or is_q_or_opt or is_bul) else WD_ALIGN_PARAGRAPH.JUSTIFY
-        for r_elem in elem.xpath('.//w:r'):
+        for r_elem in elem.iter(f'{{{wns}}}r'):
             _force_run_font(r_elem)
 
-    # Numbering definitions — force Century Gothic + strip theme attrs
-    try:
-        if hasattr(final.part, 'numbering_part') and final.part.numbering_part is not None:
-            num_xml = final.part.numbering_part.element
-            for lvl in num_xml.xpath('.//w:lvl'):
-                numFmt = lvl.find(f'{{{wns}}}numFmt')
-                if numFmt is not None and numFmt.get(qn('w:val')) == 'bullet':
-                    continue
-                lvl_rPr = lvl.find(f'{{{wns}}}rPr')
-                if lvl_rPr is None:
-                    lvl_rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
-                    lvl.append(lvl_rPr)
-                rFonts = lvl_rPr.find(f'{{{wns}}}rFonts')
-                if rFonts is None:
-                    rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
-                    lvl_rPr.append(rFonts)
-                else:
-                    rFonts.set(qn('w:ascii'), font_name)
-                    rFonts.set(qn('w:hAnsi'), font_name)
-                    rFonts.set(qn('w:cs'), font_name)
-                    for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
-                        if qn(theme_attr) in rFonts.attrib:
-                            del rFonts.attrib[qn(theme_attr)]
-                sz = lvl_rPr.find(f'{{{wns}}}sz')
-                if sz is None:
-                    sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="22"/>')
-                    lvl_rPr.append(sz)
-                else:
-                    sz.set(qn('w:val'), '22')
-                szCs = lvl_rPr.find(f'{{{wns}}}szCs')
-                if szCs is None:
-                    szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="22"/>')
-                    lvl_rPr.append(szCs)
-                else:
-                    szCs.set(qn('w:val'), '22')
-    except Exception:
-        pass
+    _fix_numbering_level_fonts(final, font_name)
 
     # Headers — force Century Gothic 11pt
     for sec in final.sections:
@@ -1913,6 +2693,12 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
 
     # Apply native numbering to the fully merged document
     apply_native_lists_to_final_doc(final, start_offset=start_offset)
+    normalize_document_xml(final)
+
+    # Sanitizar caracteres inválidos para XML antes de guardar
+    sanitize_document_xml(final)
+
+    _ensure_sectPr_is_last(final)
 
     if os.path.exists(output_path):
         for _ in range(5):
@@ -1928,6 +2714,49 @@ def merge_docx_with_guaranteed_header(template_path, file_list, output_path, con
         raise PermissionError(f"El archivo '{os.path.basename(output_path)}' est\u00e1 abierto en Microsoft Word. Por favor ci\u00e9rralo e intenta de nuevo.")
     except Exception as err:
         raise RuntimeError(f"No se pudo guardar '{os.path.basename(output_path)}': {err}")
+
+    # Reconstruir ZIP para eliminar defectos de compresión/estructura
+    _rebuild_zip(output_path)
+    # Limpiar relaciones huérfanas de headers/footers que Word COM rechaza
+    _clean_orphaned_header_footer_rels(output_path)
+    # Limpiar atributos rsidR/rsidP que python-docx agrega y Word rechaza
+    _clean_rsid_attributes(output_path)
+
+    # ── Re-guardar con Word COM para limpiar defectos XML de python-docx ──
+    word_clean = None
+    doc_clean = None
+    try:
+        import win32com.client as win32
+        word_clean = win32.DispatchEx('Word.Application')
+        word_clean.Visible = False
+        word_clean.DisplayAlerts = False
+        import time as _time
+        _time.sleep(0.2)
+        doc_clean = word_clean.Documents.Open(
+            os.path.abspath(output_path),
+            ConfirmConversions=False, ReadOnly=False,
+            AddToRecentFiles=False)
+        _time.sleep(0.2)
+        doc_clean.SaveAs2(
+            os.path.abspath(output_path),
+            FileFormat=12,
+            AddToRecentFiles=False)
+        doc_clean.Close(False)
+        doc_clean = None
+        word_clean.Quit()
+        word_clean = None
+        print(f"[GESA] Word COM re-save OK: {os.path.basename(output_path)}")
+    except Exception as _e:
+        print(f"[GESA] Word COM re-save: se conserva version python-docx ({_e})")
+    finally:
+        if doc_clean is not None:
+            try: doc_clean.Close(False)
+            except: pass
+        if word_clean is not None:
+            try: word_clean.Quit()
+            except: pass
+        doc_clean = None
+        word_clean = None
 
     shutil.rmtree(tmp_dir, ignore_errors=True)
     return cur - 1
