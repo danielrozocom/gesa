@@ -251,14 +251,48 @@ def reorder_pPr(pPr):
             pPr.append(elem)
 
 
+# Orden estricto de hijos según ECMA-376 para elementos que Word valida.
+# Ordenar alfabéticamente produce esquemas inválidos (ej. <w:b/> antes de
+# <w:rFonts/>) que Word rechaza con "contenido ilegible".
+_SCHEMA_ORDERS = {
+    'rPr': [
+        'rStyle', 'rFonts', 'b', 'bCs', 'i', 'iCs', 'caps', 'smallCaps',
+        'strike', 'dstrike', 'outline', 'shadow', 'emboss', 'imprint',
+        'noProof', 'snapToGrid', 'vanish', 'webHidden', 'color', 'spacing',
+        'w', 'kern', 'position', 'sz', 'szCs', 'highlight', 'u', 'effect',
+        'bdr', 'shd', 'fitText', 'vertAlign', 'rtl', 'cs', 'em', 'lang',
+        'eastAsianLayout', 'specVanish', 'oMath',
+    ],
+    'tblPr': [
+        'tblStyle', 'tblpPr', 'tblOverlap', 'bidiVisual', 'tblStyleRowBandSize',
+        'tblStyleColBandSize', 'tblW', 'jc', 'tblCellSpacing', 'tblInd',
+        'tblBorders', 'shd', 'tblLayout', 'tblCellMar', 'tblLook',
+        'tblCaption', 'tblDescription',
+    ],
+    'tcPr': [
+        'cnfStyle', 'tcW', 'gridSpan', 'hMerge', 'vMerge', 'tcBorders', 'shd',
+        'noWrap', 'tcMar', 'textDirection', 'tcFitText', 'vAlign', 'hideMark',
+        'headers', 'cellIns', 'cellDel', 'cellMerge', 'tcPrChange',
+    ],
+    'trPr': [
+        'cnfStyle', 'divId', 'gridBefore', 'gridAfter', 'wBefore', 'wAfter',
+        'cantSplit', 'trHeight', 'tblHeader', 'tblCellSpacing', 'jc', 'hidden',
+        'ins', 'del', 'trPrChange',
+    ],
+}
+
+
 def _reorder_el(parent):
-    """Reordena hijos de cualquier elemento (rPr, tblPr, tcPr, trPr)
-    alfabéticamente y elimina duplicados del mismo tag."""
+    """Reordena hijos de elementos con orden estricto en el esquema OpenXML
+    (rPr, tblPr, tcPr, trPr) según ECMA-376 y elimina duplicados del mismo tag."""
     if parent is None:
         return
     children = list(parent)
     if not children:
         return
+    parent_tag = parent.tag.split('}')[-1] if '}' in parent.tag else parent.tag
+    order = _SCHEMA_ORDERS.get(parent_tag)
+
     seen = {}
     for elem in children:
         tag_local = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
@@ -267,7 +301,14 @@ def _reorder_el(parent):
         else:
             parent.remove(elem)
     remaining = list(parent)
-    sorted_children = sorted(remaining, key=lambda e: e.tag.split('}')[-1] if '}' in e.tag else e.tag)
+
+    def key_fn(elem):
+        tag_local = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+        if order is None:
+            return 0
+        return order.index(tag_local) if tag_local in order else 999
+
+    sorted_children = sorted(remaining, key=key_fn)
     if sorted_children != remaining:
         for elem in remaining:
             parent.remove(elem)
@@ -725,7 +766,7 @@ def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="C
             set_single_line_spacing(p2_obj)
         return True
 
-    m = re.match(r'^(Competencia|Competence|Componente|Component|Habilidad|Habilidades|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
+    m = re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
     if m:
         raw_val = m.group(2).strip()
         if raw_val.lower().strip(' .:-') in ['es', 'en', '']:
@@ -799,7 +840,7 @@ def format_paragraph(paragraph, doc_ref):
 
     if is_redundant_header:
         # Don't delete if it's Competencia/Competence/Componente/Component/Habilidad/Nivel or a Question or Bullet!
-        if not re.match(r'^(Competencia|Competence|Componente|Component|Habilidad|Habilidades|Nivel|Level|Desempeño|Aprendizaje|Estándar|Eje)\s*[:\-]?\s*', text, re.IGNORECASE) and not re.match(r'^\s*\d+[\.\)]', text) and not is_bullet:
+        if not re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad|Nivel|Level|Desempeño|Aprendizaje|Estándar|Eje)\s*[:\-]?\s*', text, re.IGNORECASE) and not re.match(r'^\s*\d+[\.\)]', text) and not is_bullet:
             if _has_drawing(paragraph._element):
                 for t in paragraph._element.xpath('.//w:t'):
                     t.text = ""
@@ -1449,13 +1490,28 @@ def apply_formatting_to_document(doc):
 
 
 def _safe_remove_para(p):
+    """Elimina el párrafo. Retorna True si se eliminó, False si se conservó
+    (por ejemplo cuando es el último bloque de una celda de tabla)."""
     try:
         p_elem = p._element
         parent = p_elem.getparent()
         if parent is not None:
+            # No eliminar el último bloque de una celda de tabla: w:tc exige
+            # al menos un elemento de bloque (w:p/w:tbl). Dejarlo vacío produce
+            # XML inválido que hace fallar a Word ("contenido ilegible").
+            anc = parent
+            while anc is not None:
+                if anc.tag.endswith('}tc'):
+                    block_children = [c for c in anc if c.tag.endswith('}p') or c.tag.endswith('}tbl')]
+                    if p_elem in block_children and len(block_children) <= 1:
+                        return False
+                    break
+                anc = anc.getparent()
             parent.remove(p_elem)
+            return True
     except Exception:
         pass
+    return False
 
 
 def remove_blank_lines_between_question_parts(doc):
@@ -1665,7 +1721,7 @@ def reorder_competencia_before_question(doc):
                     break
 
                 # Detectar Competencia, Componente, Habilidad, Nivel, etc.
-                if re.match(r'^(Competencia|Competence|Componente|Component|Habilidad|Habilidades|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\b', np_text, re.IGNORECASE):
+                if re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\b', np_text, re.IGNORECASE):
                     comp_paras_to_move.append(np)
 
                 j += 1
@@ -1731,8 +1787,12 @@ def _format_bullet_item_clean(p):
 
 def process_habilidades_and_bullets(doc):
     """
-    1. Ajusta 'Habilidad:' (si hay 1 elemento) o 'Habilidades:' (si hay 2 o más).
-    2. Formatea los elementos de viñetas con inicial en mayúscula (Sentence Case, ej: Comparar., Definir.).
+    1. Fusiona el desglose de habilidades compartidas en el bloque en una sola
+       línea (sin viñeta) con el formato exacto:
+       "Habilidades: Comparar, Definir, Relacionar."
+       (habilidades separadas por comas y terminadas en punto).
+    2. Formatea las viñetas independientes con inicial en mayúscula
+       (Sentence Case, ej: Comparar., Definir.).
     3. Garantiza espacio limpio y libre de colisiones entre el icono de la viñeta y el texto.
     """
     all_paras = get_all_paragraphs(doc)
@@ -1741,7 +1801,7 @@ def process_habilidades_and_bullets(doc):
         p = all_paras[i]
         text = p.text.strip()
 
-        m_hab = re.match(r'^(Habilidad|Habilidades)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
+        m_hab = re.match(r'^(Habilidades|Habilidad)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
         if m_hab:
             val = m_hab.group(2).strip()
             if val.lower().strip(' .:-') in ['es', 'en', '']:
@@ -1760,26 +1820,47 @@ def process_habilidades_and_bullets(doc):
                     break
                 j += 1
 
-            if len(bullet_items) >= 2 or (val and len(bullet_items) >= 1):
-                correct_label = "Habilidades"
-            else:
-                correct_label = "Habilidad"
-
-            p.text = ""
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            remove_indents(p)
-            set_single_line_spacing(p)
-            if val and val.strip(' .:-') != '':
-                c_val = _normalize_case(val)
-                if not c_val.endswith(('.', ':', ';', '!', '?')):
-                    c_val += '.'
-                _add_styled_run(p, f"{correct_label}: ", bold=True, size_pt=11, font_name="Century Gothic")
-                _add_styled_run(p, c_val, bold=False, size_pt=11, font_name="Century Gothic")
-            else:
-                _add_styled_run(p, f"{correct_label}:", bold=True, size_pt=11, font_name="Century Gothic")
-
+            # Recolectar las habilidades (valor inline + viñetas) para escribirlas
+            # en una sola línea separadas por comas.
+            skill_texts = []
+            if val:
+                skill_texts.append(_normalize_case(val).rstrip('.'))
             for b_p in bullet_items:
-                _format_bullet_item_clean(b_p)
+                bt = b_p.text.strip()
+                m_bul = BULLET_CHARS_RE.match(bt)
+                if m_bul:
+                    bt = bt[m_bul.end():].strip()
+                bt = _normalize_case(bt).rstrip('.')
+                if bt:
+                    skill_texts.append(bt)
+
+            if skill_texts:
+                # Formato exacto (sin viñeta): Habilidades: Comparar, Definir, Relacionar.
+                correct_label = "Habilidades" if len(skill_texts) >= 2 else "Habilidad"
+                body_text = ', '.join(skill_texts)
+                if not body_text.endswith(('.', ':', ';', '!', '?')):
+                    body_text += '.'
+
+                p.text = ""
+                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                remove_indents(p)
+                set_single_line_spacing(p)
+                _add_styled_run(p, f"{correct_label}: ", bold=True, size_pt=11, font_name="Century Gothic")
+                _add_styled_run(p, body_text, bold=False, size_pt=11, font_name="Century Gothic")
+
+                for b_p in bullet_items:
+                    _safe_remove_para(b_p)
+                all_paras = get_all_paragraphs(doc)
+            else:
+                # Sin habilidades enumeradas: solo la etiqueta
+                correct_label = "Habilidades" if len(bullet_items) >= 2 else "Habilidad"
+                p.text = ""
+                p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                remove_indents(p)
+                set_single_line_spacing(p)
+                _add_styled_run(p, f"{correct_label}:", bold=True, size_pt=11, font_name="Century Gothic")
+                for b_p in bullet_items:
+                    _format_bullet_item_clean(b_p)
 
         elif is_bullet_paragraph(p):
             _format_bullet_item_clean(p)
@@ -1929,9 +2010,9 @@ def ensure_proper_spacing_between_questions(doc):
         if is_header_elem:
             np = all_paras[i + 1]
             if not np.text.strip() and not _has_drawing(np._element):
-                _safe_remove_para(np)
-                all_paras = get_all_paragraphs(doc)
-                continue
+                if _safe_remove_para(np):
+                    all_paras = get_all_paragraphs(doc)
+                    continue
         i += 1
 
     # 3. Eliminar cualquier línea en blanco entre las opciones (A, B, C, D) de las preguntas
@@ -1947,8 +2028,10 @@ def ensure_proper_spacing_between_questions(doc):
                 np = all_paras[j]
                 np_text = np.text.strip()
                 if not np_text and not _has_drawing(np._element):
-                    _safe_remove_para(np)
-                    all_paras = get_all_paragraphs(doc)
+                    if _safe_remove_para(np):
+                        all_paras = get_all_paragraphs(doc)
+                    else:
+                        break
                 else:
                     break
         i += 1
@@ -1964,9 +2047,9 @@ def ensure_proper_spacing_between_questions(doc):
             if not np_text and not _has_drawing(np._element):
                 nnp = all_paras[i + 2] if i + 2 < len(all_paras) else None
                 if nnp and bool(re.match(r'^\s*[\(\[\{]?([a-eA-E])\s*[\.\)\]\}\-\:\/]', nnp.text.strip())):
-                    _safe_remove_para(np)
-                    all_paras = get_all_paragraphs(doc)
-                    continue
+                    if _safe_remove_para(np):
+                        all_paras = get_all_paragraphs(doc)
+                        continue
         i += 1
 
     # 4. Garantizar exactamente 1 línea en blanco al terminar una pregunta/opciones antes del nuevo bloque
@@ -2415,6 +2498,23 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
             except:
                 pass
 
+        # ── Unificar encabezados/pies de página de todas las secciones ──
+        # InsertFile importa un salto de sección por cada subdocumento, por lo
+        # que el resultado final tiene varias secciones. Cada sección debe
+        # heredar el encabezado/pie de la primera; de lo contrario la
+        # paginación (números de página) aparece fragmentada y distinta por
+        # bloque de asignatura.
+        try:
+            if doc.Sections.Count > 1:
+                for s_idx in range(2, doc.Sections.Count + 1):
+                    try:
+                        doc.Sections(s_idx).Headers(1).LinkToPrevious = True
+                        doc.Sections(s_idx).Footers(1).LinkToPrevious = True
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         try:
             doc.Content.Find.ClearFormatting()
             for k, v in replacements_map.items():
@@ -2456,12 +2556,22 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
         except:
             pass
         # Pie de página con número de página
+        # El template ya trae "Página X de Y" con campos PAGE/NUMPAGES; no se
+        # debe insertar otro campo de número de página encima (Word lo pega al
+        # texto existente y la paginación "sale rara"). Solo se agrega si el
+        # pie de la primera sección no tiene ningún campo.
         try:
             if doc.Sections.Count > 0:
                 ft = doc.Sections(1).Footers(1)
                 ft.Range.Font.Name = "Century Gothic"
                 ft.Range.Font.Size = 11
-                ft.PageNumbers.Add(PageNumberAlignment=2)
+                has_field = False
+                try:
+                    has_field = ft.Range.Fields.Count > 0
+                except Exception:
+                    has_field = False
+                if not has_field:
+                    ft.PageNumbers.Add(PageNumberAlignment=2)
         except:
             pass
         # Ajustar márgenes de página
@@ -2668,7 +2778,7 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
             set_single_line_spacing(para)
             text = para.text.strip()
 
-            is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidad|Habilidades|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\s*[:\-]', text, re.IGNORECASE))
+            is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\s*[:\-]', text, re.IGNORECASE))
             is_q_or_opt = bool(re.match(r'^(\s*[\(\[\{]?(\d+|[a-eA-E])\s*[\.\)\]\}\-\:\/])', text))
             is_bul = is_bullet_paragraph(para)
             if not _has_drawing(elem):
