@@ -928,16 +928,17 @@ def set_single_line_spacing(paragraph):
 
     sp = pPr.find(qn('w:spacing'))
     if sp is None:
-        sp = parse_xml(f'<w:spacing {nsdecls("w")} w:line="240" w:lineRule="auto" w:before="0" w:after="0"/>')
+        sp = parse_xml(f'<w:spacing {nsdecls("w")} w:line="240" w:lineRule="auto" w:before="0" w:after="0" w:beforeAutospacing="0" w:afterAutospacing="0" w:beforeLines="0" w:afterLines="0"/>')
         pPr.append(sp)
     else:
         sp.set(qn('w:line'), '240')
         sp.set(qn('w:lineRule'), 'auto')
         sp.set(qn('w:before'), '0')
         sp.set(qn('w:after'), '0')
-        for key in ['beforeAutospacing', 'afterAutospacing', 'beforeLines', 'afterLines']:
-            if qn(f'w:{key}') in sp.attrib:
-                del sp.attrib[qn(f'w:{key}')]
+        sp.set(qn('w:beforeAutospacing'), '0')
+        sp.set(qn('w:afterAutospacing'), '0')
+        sp.set(qn('w:beforeLines'), '0')
+        sp.set(qn('w:afterLines'), '0')
 
     reorder_pPr(pPr)
 
@@ -2397,6 +2398,15 @@ def format_merged_document(final):
     font_name = "Century Gothic"
     _SENTINEL_TEXT = "GESABOUNDARY"
 
+    # Force space before/after and line spacing to 0/1.0 for the Normal style
+    try:
+        style_normal = final.styles['Normal']
+        style_normal.paragraph_format.space_before = Pt(0)
+        style_normal.paragraph_format.space_after = Pt(0)
+        style_normal.paragraph_format.line_spacing = 1.0
+    except Exception:
+        pass
+
     def _force_run_font(r_elem):
         rPr = r_elem.find(f'{{{wns}}}rPr')
         if rPr is None:
@@ -2873,6 +2883,9 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
         # ── Aplicar listas nativas al documento mergeado por Word COM ──
         try:
             final_merged = _open_doc(tmp_word)
+            process_competencias_and_componentes(final_merged)
+            process_habilidades_and_bullets(final_merged)
+            ensure_proper_spacing_between_questions(final_merged)
             apply_native_lists_to_final_doc(final_merged, start_offset=start_offset)
             format_merged_document(final_merged)
             
