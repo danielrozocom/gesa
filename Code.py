@@ -408,7 +408,7 @@ def apply_page_setup(section):
 
 def get_all_paragraphs(doc):
     from docx.text.paragraph import Paragraph
-    return [Paragraph(p, doc) for p in doc.element.body.xpath('.//w:p')]
+    return [Paragraph(p, doc) for p in doc.element.body.xpath('.//w:p[not(ancestor::w:txbxContent)]')]
 
 
 def _prepend_run(paragraph, text, bold=False, font_name="Century Gothic", size_pt=11):
@@ -1478,8 +1478,8 @@ def apply_formatting_to_document(doc):
     font_name = "Century Gothic"
     from docx.text.paragraph import Paragraph
     
-    # Process all paragraphs in the document body
-    for p_elem in doc.element.body.xpath('.//w:p'):
+    # Process all paragraphs in the document body (excluding textboxes)
+    for p_elem in doc.element.body.xpath('.//w:p[not(ancestor::w:txbxContent)]'):
         para = Paragraph(p_elem, doc)
         text = para.text.strip()
         
