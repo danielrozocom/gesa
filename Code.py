@@ -1365,7 +1365,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
         text = p.text.strip()
         
         # Check Option
-        mo = re.match(r'^(\s*[\(\[\{]?([a-eA-E])\s*[\.\)\]\}\-\:\/]\s)(?!\d)', text)
+        mo = re.match(r'^(\s*[\(\[\{]?([a-eA-E])\s*[\.\)\]\}\-\:\/]\s)', text)
         if mo:
             _strip_prefix_from_runs(p, len(mo.group(1)))
             pPr = p._element.get_or_add_pPr()
@@ -1666,10 +1666,10 @@ def clear_header_completely(header):
 def apply_section0_page_setup(section):
     section.page_width = Inches(8.5)
     section.page_height = Inches(11)
-    section.top_margin = Cm(1.2)
-    section.bottom_margin = Cm(1.2)
-    section.left_margin = Cm(1.2)
-    section.right_margin = Cm(1.2)
+    section.top_margin = Cm(1)
+    section.bottom_margin = Cm(1)
+    section.left_margin = Cm(1)
+    section.right_margin = Cm(1)
     section.header_distance = Cm(0.8)
     section.footer_distance = Cm(0.8)
     force_single_column(section)
@@ -1683,10 +1683,10 @@ def apply_section0_page_setup(section):
 def apply_subsequent_page_setup(section):
     section.page_width = Inches(8.5)
     section.page_height = Inches(11)
-    section.top_margin = Cm(1.2)
-    section.bottom_margin = Cm(1.2)
-    section.left_margin = Cm(1.2)
-    section.right_margin = Cm(1.2)
+    section.top_margin = Cm(1)
+    section.bottom_margin = Cm(1)
+    section.left_margin = Cm(1)
+    section.right_margin = Cm(1)
     section.header_distance = Cm(0.5)
     section.footer_distance = Cm(0.8)
     force_single_column(section)
@@ -2582,8 +2582,15 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
 
         for s_idx in range(1, doc.Sections.Count + 1):
             try:
-                doc.Sections(s_idx).PageSetup.TextColumns.SetCount(1)
-                doc.Sections(s_idx).PageSetup.VerticalAlignment = 0  # wdAlignVerticalTop (0)
+                ps = doc.Sections(s_idx).PageSetup
+                ps.TopMargin = 28.3465
+                ps.BottomMargin = 28.3465
+                ps.LeftMargin = 28.3465
+                ps.RightMargin = 28.3465
+                ps.TextColumns.SetCount(1)
+                ps.VerticalAlignment = 0  # wdAlignVerticalTop (0)
+                if s_idx > 1:
+                    ps.DifferentFirstPageHeaderFooter = False
             except:
                 pass
 
@@ -2597,8 +2604,13 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
             if doc.Sections.Count > 1:
                 for s_idx in range(2, doc.Sections.Count + 1):
                     try:
+                        doc.Sections(s_idx).PageSetup.DifferentFirstPageHeaderFooter = False
                         doc.Sections(s_idx).Headers(1).LinkToPrevious = True
+                        doc.Sections(s_idx).Headers(2).LinkToPrevious = True
+                        doc.Sections(s_idx).Headers(3).LinkToPrevious = True
                         doc.Sections(s_idx).Footers(1).LinkToPrevious = True
+                        doc.Sections(s_idx).Footers(2).LinkToPrevious = True
+                        doc.Sections(s_idx).Footers(3).LinkToPrevious = True
                     except Exception:
                         pass
         except Exception:
@@ -2663,14 +2675,18 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
                     ft.PageNumbers.Add(PageNumberAlignment=2)
         except:
             pass
-        # Ajustar márgenes de página y forzar alineación vertical superior
+        # Ajustar márgenes de página y forzar alineación vertical superior de todo el documento
         try:
-            ps = doc.PageSetup
-            ps.TopMargin = 0.3937 * 72
-            ps.BottomMargin = 0.3937 * 72
-            ps.LeftMargin = 0.3937 * 72
-            ps.RightMargin = 0.3937 * 72
-            ps.VerticalAlignment = 0  # wdAlignVerticalTop (0)
+            for s_idx in range(1, doc.Sections.Count + 1):
+                try:
+                    ps = doc.Sections(s_idx).PageSetup
+                    ps.TopMargin = 28.3465
+                    ps.BottomMargin = 28.3465
+                    ps.LeftMargin = 28.3465
+                    ps.RightMargin = 28.3465
+                    ps.VerticalAlignment = 0  # wdAlignVerticalTop (0)
+                except:
+                    pass
         except:
             pass
 
@@ -2695,6 +2711,23 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
         try:
             final_merged = _open_doc(tmp_word)
             apply_native_lists_to_final_doc(final_merged, start_offset=start_offset)
+            
+            # Forzar la configuración del pie de página con paginación dinámica "Página X de Y" en todas las secciones
+            if len(final_merged.sections) > 0:
+                for idx, sec in enumerate(final_merged.sections):
+                    try:
+                        sec.different_first_page_header_footer = False
+                    except:
+                        pass
+                    try:
+                        sec.footer.is_linked_to_previous = False
+                    except:
+                        pass
+                    try:
+                        setup_footer_page_number(sec.footer, doc=final_merged)
+                    except Exception as e_f:
+                        print(f"[GESA] Error setting up footer on section {idx}: {e_f}")
+            
             normalize_document_xml(final_merged)
             sanitize_document_xml(final_merged)
             _ensure_sectPr_is_last(final_merged)
