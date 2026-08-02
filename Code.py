@@ -399,6 +399,11 @@ def apply_page_setup(section):
     section.right_margin = Cm(1)
     section.header_distance = Cm(0.3)
     force_single_column(section)
+    # Force vertical alignment to top
+    sectPr = section._sectPr
+    vAlign = sectPr.find(qn('w:vAlign'))
+    if vAlign is not None:
+        sectPr.remove(vAlign)
 
 
 def get_all_paragraphs(doc):
@@ -1010,13 +1015,38 @@ def inject_list_definitions(doc, start_number=1):
             </w:abstractNum>
         ''')
         
+        # Bullet list abstractNum (Bullets)
+        abs_bullet = parse_xml(f'''
+            <w:abstractNum {nsdecls('w')} w:abstractNumId="9002">
+                <w:multiLevelType w:val="hybridMultilevel"/>
+                <w:lvl w:ilvl="0">
+                    <w:start w:val="1"/>
+                    <w:numFmt w:val="bullet"/>
+                    <w:suff w:val="space"/>
+                    <w:lvlText w:val="•"/>
+                    <w:lvlJc w:val="left"/>
+                    <w:pPr>
+                        <w:spacing w:before="0" w:after="0"/>
+                        <w:ind w:left="360" w:hanging="240"/>
+                    </w:pPr>
+                    <w:rPr>
+                        <w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Century Gothic"/>
+                        <w:sz w:val="22"/>
+                        <w:szCs w:val="22"/>
+                    </w:rPr>
+                </w:lvl>
+            </w:abstractNum>
+        ''')
+        
         first_num = num_xml.find(qn('w:num'))
         if first_num is not None:
             first_num.addprevious(abs_dec)
             first_num.addprevious(abs_alpha)
+            first_num.addprevious(abs_bullet)
         else:
             num_xml.append(abs_dec)
             num_xml.append(abs_alpha)
+            num_xml.append(abs_bullet)
             
         num_dec = parse_xml(f'''
             <w:num {nsdecls('w')} w:numId="9000">
@@ -1040,6 +1070,14 @@ def inject_list_definitions(doc, start_number=1):
             </w:num>
         ''')
         num_xml.append(num_opt_base)
+        
+        # Pre-create numId=9002 for bullets
+        num_bullet = parse_xml(f'''
+            <w:num {nsdecls('w')} w:numId="9002">
+                <w:abstractNumId w:val="9002"/>
+            </w:num>
+        ''')
+        num_xml.append(num_bullet)
     else:
         # Update startOverride on existing num 9000
         existing_num = num_xml.xpath('w:num[@w:numId="9000"]')
@@ -1069,6 +1107,16 @@ def inject_list_definitions(doc, start_number=1):
                 </w:num>
             ''')
             num_xml.append(num_opt_base)
+            
+        # Ensure numId=9002 (bullet list container) always exists
+        existing_9002 = num_xml.xpath('w:num[@w:numId="9002"]')
+        if not existing_9002:
+            num_bullet = parse_xml(f'''
+                <w:num {nsdecls('w')} w:numId="9002">
+                    <w:abstractNumId w:val="9002"/>
+                </w:num>
+            ''')
+            num_xml.append(num_bullet)
 
     return True
 
@@ -1370,6 +1418,27 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
                 num_xml.append(new_num)
             continue
 
+        # Check Bullet
+        mb = BULLET_CHARS_RE.match(p.text)
+        if mb:
+            _strip_prefix_from_runs(p, len(mb.group(0)))
+            pPr = p._element.get_or_add_pPr()
+            numPr = pPr.find(qn('w:numPr'))
+            if numPr is not None:
+                pPr.remove(numPr)
+            ind = pPr.find(qn('w:ind'))
+            if ind is not None:
+                pPr.remove(ind)
+            numPr = parse_xml(f'<w:numPr {nsdecls("w")}><w:ilvl w:val="0"/><w:numId w:val="9002"/></w:numPr>')
+            pPr.append(numPr)
+            ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="240"/>')
+            pPr.append(ind_elem)
+            reorder_pPr(pPr)
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            strip_leading_tabs(p)
+            _ensure_ends_with_period(p)
+            continue
+
 
 def _fix_numbering_level_fonts(doc, font_name="Century Gothic"):
     """Fix fonts in numbering.xml levels safely without breaking bullet/symbol levels."""
@@ -1604,6 +1673,11 @@ def apply_section0_page_setup(section):
     section.header_distance = Cm(0.8)
     section.footer_distance = Cm(0.8)
     force_single_column(section)
+    # Force vertical alignment to top
+    sectPr = section._sectPr
+    vAlign = sectPr.find(qn('w:vAlign'))
+    if vAlign is not None:
+        sectPr.remove(vAlign)
 
 
 def apply_subsequent_page_setup(section):
@@ -1616,6 +1690,11 @@ def apply_subsequent_page_setup(section):
     section.header_distance = Cm(0.5)
     section.footer_distance = Cm(0.8)
     force_single_column(section)
+    # Force vertical alignment to top
+    sectPr = section._sectPr
+    vAlign = sectPr.find(qn('w:vAlign'))
+    if vAlign is not None:
+        sectPr.remove(vAlign)
 
 
 def replace_in_all(tpl, replacements_map):
@@ -2388,6 +2467,10 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
                     sectPr.remove(titlePg)
             except:
                 pass
+            # Force vertical alignment to top
+            vAlign = sectPr.find(qn('w:vAlign'))
+            if vAlign is not None:
+                sectPr.remove(vAlign)
 
         tp = os.path.join(tmp_dir, os.path.basename(fp) + '.tmp.docx')
         normalize_document_xml(sd)
@@ -2415,6 +2498,11 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
     replace_in_all(tpl, replacements_map)
     for sec in tpl.sections:
         force_single_column(sec)
+        # Force vertical alignment to top
+        sectPr = sec._sectPr
+        vAlign = sectPr.find(qn('w:vAlign'))
+        if vAlign is not None:
+            sectPr.remove(vAlign)
 
     wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
     for br in list(tpl.element.body.xpath('.//w:br[@w:type="page"]')):
@@ -2495,6 +2583,7 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
         for s_idx in range(1, doc.Sections.Count + 1):
             try:
                 doc.Sections(s_idx).PageSetup.TextColumns.SetCount(1)
+                doc.Sections(s_idx).PageSetup.VerticalAlignment = 0  # wdAlignVerticalTop (0)
             except:
                 pass
 
@@ -2574,13 +2663,14 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
                     ft.PageNumbers.Add(PageNumberAlignment=2)
         except:
             pass
-        # Ajustar márgenes de página
+        # Ajustar márgenes de página y forzar alineación vertical superior
         try:
             ps = doc.PageSetup
             ps.TopMargin = 0.3937 * 72
             ps.BottomMargin = 0.3937 * 72
             ps.LeftMargin = 0.3937 * 72
             ps.RightMargin = 0.3937 * 72
+            ps.VerticalAlignment = 0  # wdAlignVerticalTop (0)
         except:
             pass
 
@@ -2600,6 +2690,38 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
         word.Quit()
         word = None
         time.sleep(0.3)
+
+        # ── Aplicar listas nativas al documento mergeado por Word COM ──
+        try:
+            final_merged = _open_doc(tmp_word)
+            apply_native_lists_to_final_doc(final_merged, start_offset=start_offset)
+            normalize_document_xml(final_merged)
+            sanitize_document_xml(final_merged)
+            _ensure_sectPr_is_last(final_merged)
+            final_merged.save(tmp_word)
+            _rebuild_zip(tmp_word)
+            _clean_orphaned_header_footer_rels(tmp_word)
+            _clean_rsid_attributes(tmp_word)
+
+            # Re-guardar con Word COM para limpiar defectos XML introducidos por python-docx
+            import win32com.client as win32
+            word_clean = win32.DispatchEx('Word.Application')
+            word_clean.Visible = False
+            word_clean.DisplayAlerts = False
+            time.sleep(0.2)
+            doc_clean = word_clean.Documents.Open(
+                os.path.abspath(tmp_word),
+                ConfirmConversions=False, ReadOnly=False,
+                AddToRecentFiles=False)
+            time.sleep(0.2)
+            doc_clean.Save()
+            doc_clean.Close(False)
+            doc_clean = None
+            word_clean.Quit()
+            word_clean = None
+            time.sleep(0.3)
+        except Exception as e_native:
+            print(f"[GESA] Error aplicando listas nativas en flujo COM: {e_native}")
 
         # Copiar a destino (OneDrive ya no interfiere con Word COM)
         if os.path.exists(output_path):
