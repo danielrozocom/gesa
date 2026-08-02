@@ -826,8 +826,8 @@ def format_paragraph(paragraph, doc_ref):
         # Strip all indents by default for clean flush-left alignment of normal paragraphs
         remove_indents(paragraph)
     else:
-        # For bullet paragraphs, ensure alignment is LEFT and a clean hanging indent exists
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        # For bullet paragraphs, ensure alignment is JUSTIFY and a clean hanging indent exists
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         pPr = paragraph._element.get_or_add_pPr()
         ind = pPr.find(qn('w:ind'))
         if ind is None:
@@ -1380,7 +1380,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
             ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="360"/>')
             pPr.append(ind_elem)
             reorder_pPr(pPr)
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             strip_leading_tabs(p)
             _ensure_ends_with_period(p)
             continue
@@ -1401,7 +1401,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
             ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="360"/>')
             pPr.append(ind_elem)
             reorder_pPr(pPr)
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             strip_leading_tabs(p)
             
             # Restart options for this question
@@ -1434,7 +1434,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
             ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="240"/>')
             pPr.append(ind_elem)
             reorder_pPr(pPr)
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             strip_leading_tabs(p)
             _ensure_ends_with_period(p)
             continue
@@ -1483,7 +1483,7 @@ def apply_formatting_to_document(doc):
         para = Paragraph(p_elem, doc)
         text = para.text.strip()
         
-        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*[:\-]', text, re.IGNORECASE))
+        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad)\s*[:\-]', text, re.IGNORECASE))
         
         if not _has_drawing(p_elem):
             if is_comp:
@@ -1592,7 +1592,7 @@ def remove_blank_lines_between_question_parts(doc):
         
         is_question = bool(re.match(r'^\s*\d+[\.\)]', text))
         is_option = bool(re.match(r'^\s*([a-eA-E])[\.\)]', text))
-        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*:', text, re.IGNORECASE))
+        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad)\s*:', text, re.IGNORECASE))
         
         # If this is a question, option, or competencia/componente, remove following blank lines (unless they contain images/drawings)
         if is_question or is_option or is_comp:
@@ -1837,7 +1837,7 @@ def _format_bullet_item_clean(p):
                     rPr_xml = copy.deepcopy(rPr_elem)
 
             p.text = ""
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             set_single_line_spacing(p)
 
             pPr = p._element.get_or_add_pPr()
@@ -2392,6 +2392,169 @@ def strip_section_breaks(doc):
 
 # ── MAIN MERGE ───────────────────────────────────────────────
 
+def format_merged_document(final):
+    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    font_name = "Century Gothic"
+    _SENTINEL_TEXT = "GESABOUNDARY"
+
+    def _force_run_font(r_elem):
+        rPr = r_elem.find(f'{{{wns}}}rPr')
+        if rPr is None:
+            rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
+            r_elem.insert(0, rPr)
+        rFonts = rPr.find(f'{{{wns}}}rFonts')
+        if rFonts is None:
+            rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
+            rPr.append(rFonts)
+        else:
+            ascii_f = (rFonts.get(qn('w:ascii')) or '').lower()
+            if not any(sym in ascii_f for sym in ['symbol', 'wingdings', 'webdings', 'marlett']):
+                rFonts.set(qn('w:ascii'), font_name)
+                rFonts.set(qn('w:hAnsi'), font_name)
+                rFonts.set(qn('w:cs'), font_name)
+                for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
+                    if qn(theme_attr) in rFonts.attrib:
+                        del rFonts.attrib[qn(theme_attr)]
+        sz = rPr.find(f'{{{wns}}}sz')
+        if sz is None:
+            sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="22"/>')
+            rPr.append(sz)
+        else:
+            sz.set(qn('w:val'), '22')
+        szCs = rPr.find(f'{{{wns}}}szCs')
+        if szCs is None:
+            szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="22"/>')
+            rPr.append(szCs)
+        else:
+            szCs.set(qn('w:val'), '22')
+
+    # Locate sentinel by text content
+    body_children = list(final.element.body)
+    sentinel_idx = None
+    for idx_c, child in enumerate(body_children):
+        if child.tag.endswith('}p') or child.tag == 'p':
+            for t in child.xpath('.//w:t'):
+                if _SENTINEL_TEXT in (t.text or ''):
+                    sentinel_idx = idx_c
+                    break
+        if sentinel_idx is not None:
+            break
+
+    # Strip page breaks only from sentinel paragraph if any
+    if sentinel_idx is not None:
+        child = body_children[sentinel_idx]
+        if child.tag.endswith('}p') or child.tag == 'p':
+            for br in list(child.xpath('.//w:br[@w:type="page"]')):
+                p_br = br.getparent()
+                if p_br is not None:
+                    p_br.remove(br)
+
+    if sentinel_idx is not None:
+        try:
+            s_elem = body_children[sentinel_idx]
+            for t in s_elem.xpath('.//w:t'):
+                t.text = (t.text or '').replace(_SENTINEL_TEXT, '')
+            s_elem.getparent().remove(s_elem)
+        except Exception:
+            pass
+        body_children = list(final.element.body)
+        subdoc_elems = body_children[sentinel_idx:]
+    else:
+        subdoc_elems = []
+
+    # Safety: remove any leftover fragments containing sentinel text
+    for t in final.element.body.xpath(f'.//w:t[contains(text(), "{_SENTINEL_TEXT}")]'):
+        t.text = (t.text or '').replace(_SENTINEL_TEXT, '')
+    for p_elem in final.element.body.xpath('.//w:p'):
+        text_content = ''.join(t.text or '' for t in p_elem.xpath('.//w:t'))
+        if _SENTINEL_TEXT in text_content:
+            try:
+                t_elem = p_elem.xpath(f'.//w:t[contains(text(), "{_SENTINEL_TEXT}")]')
+                if t_elem:
+                    t_elem[0].text = (t_elem[0].text or '').replace(_SENTINEL_TEXT, '')
+            except Exception:
+                pass
+
+    from docx.text.paragraph import Paragraph as _Paragraph
+    
+    # Gather all paragraphs under the subdocument elements (including nested ones like inside tables, excluding textboxes)
+    subdoc_paras = []
+    for elem in subdoc_elems:
+        if elem.tag.endswith('}p') or elem.tag == 'p':
+            if not elem.xpath('ancestor::w:txbxContent'):
+                subdoc_paras.append(elem)
+        else:
+            for p_elem in elem.xpath('.//w:p[not(ancestor::w:txbxContent)]'):
+                subdoc_paras.append(p_elem)
+
+    for p_elem in subdoc_paras:
+        para = _Paragraph(p_elem, final)
+        set_single_line_spacing(para)
+        text = para.text.strip()
+
+        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad)\s*[:\-]', text, re.IGNORECASE))
+        if not _has_drawing(p_elem):
+            para.alignment = WD_ALIGN_PARAGRAPH.LEFT if is_comp else WD_ALIGN_PARAGRAPH.JUSTIFY
+
+        if not text and not _has_drawing(p_elem):
+            # Empty separator paragraph -> force 2pt (w:val="4") for paper saving per AGENTS.md rule
+            pPr = p_elem.get_or_add_pPr()
+            rPr = pPr.find(f'{{{wns}}}rPr')
+            if rPr is None:
+                rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
+                pPr.append(rPr)
+            sz = rPr.find(f'{{{wns}}}sz')
+            if sz is None:
+                sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="4"/>')
+                rPr.append(sz)
+            else:
+                sz.set(qn('w:val'), '4')
+            szCs = rPr.find(f'{{{wns}}}szCs')
+            if szCs is None:
+                szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="4"/>')
+                rPr.append(szCs)
+            else:
+                szCs.set(qn('w:val'), '4')
+            
+            # Also force any child runs in the empty paragraph to 2pt
+            for r_elem in p_elem.iter(f'{{{wns}}}r'):
+                r_rPr = r_elem.find(f'{{{wns}}}rPr')
+                if r_rPr is None:
+                    r_rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
+                    r_elem.insert(0, r_rPr)
+                r_sz = r_rPr.find(f'{{{wns}}}sz')
+                if r_sz is None:
+                    r_sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="4"/>')
+                    r_rPr.append(r_sz)
+                else:
+                    r_sz.set(qn('w:val'), '4')
+                r_szCs = r_rPr.find(f'{{{wns}}}szCs')
+                if r_szCs is None:
+                    r_szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="4"/>')
+                    r_rPr.append(r_szCs)
+                else:
+                    r_szCs.set(qn('w:val'), '4')
+        else:
+            # Non-empty paragraphs -> force Century Gothic 11pt
+            for r_elem in p_elem.iter(f'{{{wns}}}r'):
+                _force_run_font(r_elem)
+
+    _fix_numbering_level_fonts(final, font_name)
+
+    # Headers — force Century Gothic 11pt
+    for sec in final.sections:
+        for hdr in (sec.header, sec.first_page_header):
+            if hdr is not None:
+                for r_elem in hdr._element.xpath('.//w:r'):
+                    _force_run_font(r_elem)
+
+    # Footer pagination — force Century Gothic 11pt
+    for sec in final.sections:
+        if sec.footer is not None:
+            for r_elem in sec.footer._element.xpath('.//w:r'):
+                _force_run_font(r_elem)
+
+
 def merge_docx_with_guaranteed_header(template_path, file_list, output_path, config_data, start_offset=0, stop_check=None):
     try:
         return _merge_impl(template_path, file_list, output_path, config_data, start_offset, stop_check)
@@ -2711,6 +2874,7 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
         try:
             final_merged = _open_doc(tmp_word)
             apply_native_lists_to_final_doc(final_merged, start_offset=start_offset)
+            format_merged_document(final_merged)
             
             # Forzar la configuración del pie de página con paginación dinámica "Página X de Y" en todas las secciones
             if len(final_merged.sections) > 0:
@@ -2842,121 +3006,7 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
         sec.footer.is_linked_to_previous = False
         setup_footer_page_number(sec.footer, doc=final)
 
-    # ── Force Century Gothic 11pt on subdoc content (after sentinel) ──
-    # The template body content (before the sentinel) keeps its original font.
-    wns = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
-    font_name = "Century Gothic"
-    _SENTINEL_TEXT = "GESABOUNDARY"
-
-    def _force_run_font(r_elem):
-        rPr = r_elem.find(f'{{{wns}}}rPr')
-        if rPr is None:
-            rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
-            r_elem.insert(0, rPr)
-        rFonts = rPr.find(f'{{{wns}}}rFonts')
-        if rFonts is None:
-            rFonts = parse_xml(f'<w:rFonts {nsdecls("w")} w:ascii="{font_name}" w:hAnsi="{font_name}" w:cs="{font_name}"/>')
-            rPr.append(rFonts)
-        else:
-            ascii_f = (rFonts.get(qn('w:ascii')) or '').lower()
-            if not any(sym in ascii_f for sym in ['symbol', 'wingdings', 'webdings', 'marlett']):
-                rFonts.set(qn('w:ascii'), font_name)
-                rFonts.set(qn('w:hAnsi'), font_name)
-                rFonts.set(qn('w:cs'), font_name)
-                for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
-                    if qn(theme_attr) in rFonts.attrib:
-                        del rFonts.attrib[qn(theme_attr)]
-        sz = rPr.find(f'{{{wns}}}sz')
-        if sz is None:
-            sz = parse_xml(f'<w:sz {nsdecls("w")} w:val="22"/>')
-            rPr.append(sz)
-        else:
-            sz.set(qn('w:val'), '22')
-        szCs = rPr.find(f'{{{wns}}}szCs')
-        if szCs is None:
-            szCs = parse_xml(f'<w:szCs {nsdecls("w")} w:val="22"/>')
-            rPr.append(szCs)
-        else:
-            szCs.set(qn('w:val'), '22')
-
-    # Locate sentinel by text content
-    body_children = list(final.element.body)
-    sentinel_idx = None
-    for idx_c, child in enumerate(body_children):
-        if child.tag.endswith('}p') or child.tag == 'p':
-            for t in child.xpath('.//w:t'):
-                if _SENTINEL_TEXT in (t.text or ''):
-                    sentinel_idx = idx_c
-                    break
-        if sentinel_idx is not None:
-            break
-
-    # Strip page breaks only from sentinel paragraph if any
-    if sentinel_idx is not None:
-        child = body_children[sentinel_idx]
-        if child.tag.endswith('}p') or child.tag == 'p':
-            for br in list(child.xpath('.//w:br[@w:type="page"]')):
-                p_br = br.getparent()
-                if p_br is not None:
-                    p_br.remove(br)
-
-    if sentinel_idx is not None:
-        try:
-            s_elem = body_children[sentinel_idx]
-            for t in s_elem.xpath('.//w:t'):
-                t.text = (t.text or '').replace(_SENTINEL_TEXT, '')
-            s_elem.getparent().remove(s_elem)
-        except Exception:
-            pass
-        body_children = list(final.element.body)
-        subdoc_elems = body_children[sentinel_idx:]
-    else:
-        subdoc_elems = []
-
-    # Safety: remove any leftover fragments containing sentinel text
-    for t in final.element.body.xpath(f'.//w:t[contains(text(), "{_SENTINEL_TEXT}")]'):
-        t.text = (t.text or '').replace(_SENTINEL_TEXT, '')
-    for p_elem in final.element.body.xpath('.//w:p'):
-        text_content = ''.join(t.text or '' for t in p_elem.xpath('.//w:t'))
-        if _SENTINEL_TEXT in text_content:
-            try:
-                t_elem = p_elem.xpath(f'.//w:t[contains(text(), "{_SENTINEL_TEXT}")]')
-                if t_elem:
-                    t_elem[0].text = (t_elem[0].text or '').replace(_SENTINEL_TEXT, '')
-            except Exception:
-                pass
-
-    from docx.text.paragraph import Paragraph as _Paragraph
-    for elem in subdoc_elems:
-        if elem.tag.endswith('}p') or elem.tag == 'p':
-            para = _Paragraph(elem, final)
-            set_single_line_spacing(para)
-            text = para.text.strip()
-
-            is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\s*[:\-]', text, re.IGNORECASE))
-            is_q_or_opt = bool(re.match(r'^(\s*[\(\[\{]?(\d+|[a-eA-E])\s*[\.\)\]\}\-\:\/])', text))
-            is_bul = is_bullet_paragraph(para)
-            if not _has_drawing(elem):
-                para.alignment = WD_ALIGN_PARAGRAPH.LEFT if (is_comp or is_q_or_opt or is_bul) else WD_ALIGN_PARAGRAPH.JUSTIFY
-        for r_elem in elem.iter(f'{{{wns}}}r'):
-            _force_run_font(r_elem)
-
-    _fix_numbering_level_fonts(final, font_name)
-
-    # Headers — force Century Gothic 11pt
-    for sec in final.sections:
-        for hdr in (sec.header, sec.first_page_header):
-            if hdr is not None:
-                for r_elem in hdr._element.xpath('.//w:r'):
-                    _force_run_font(r_elem)
-
-    # Footer pagination — force Century Gothic 11pt
-    for sec in final.sections:
-        if sec.footer is not None:
-            for r_elem in sec.footer._element.xpath('.//w:r'):
-                _force_run_font(r_elem)
-
-    # Apply native numbering to the fully merged document
+    format_merged_document(final)
     apply_native_lists_to_final_doc(final, start_offset=start_offset)
     normalize_document_xml(final)
 
