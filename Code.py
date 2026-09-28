@@ -2663,8 +2663,8 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
         now = datetime.datetime.utcnow()
         tpl.core_properties.created = now
         tpl.core_properties.modified = now
-        tpl.core_properties.last_modified_by = "GESA"
-        tpl.core_properties.author = "GESA"
+        tpl.core_properties.last_modified_by = "GESA by Daniel Rozo"
+        tpl.core_properties.author = "GESA by Daniel Rozo"
         tpl.core_properties.revision = 1
     except Exception as e:
         print(f"[GESA] No se pudieron actualizar los metadatos de tpl: {e}")
@@ -2867,7 +2867,7 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
         try:
             doc.BuiltInDocumentProperties("Title").Value = expanded_title
             doc.BuiltInDocumentProperties("Category").Value = f"{eval_prefix} de Suficiencia Académica"
-            doc.BuiltInDocumentProperties("Author").Value = "GESA"
+            doc.BuiltInDocumentProperties("Author").Value = "GESA by Daniel Rozo"
         except Exception as e:
             print(f"[GESA] Word COM no pudo establecer propiedades: {e}")
 
@@ -2996,8 +2996,8 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
         now = datetime.datetime.utcnow()
         final.core_properties.created = now
         final.core_properties.modified = now
-        final.core_properties.last_modified_by = "GESA"
-        final.core_properties.author = "GESA"
+        final.core_properties.last_modified_by = "GESA by Daniel Rozo"
+        final.core_properties.author = "GESA by Daniel Rozo"
         final.core_properties.revision = 1
     except Exception as e:
         print(f"[GESA] No se pudieron actualizar los metadatos de final: {e}")
