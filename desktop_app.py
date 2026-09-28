@@ -1313,6 +1313,7 @@ class DesktopApp(QMainWindow):
         self.template_path = ""
         self.output_dir = ""
         self.grade = ""
+        self._loaded_grade = ""
         self.period = "P3"
         self.name_template = "E.S.A._{grade}_{period}_{session}_{year}"
         self.title_template = "Evaluaciones de Suficiencia Académica - {grade} - {period} - {session} - {year}"
@@ -1578,7 +1579,7 @@ class DesktopApp(QMainWindow):
         self._refresh_sessions()
 
     def _remove_sessions(self):
-        rows = [i.row() for i in self.sessions_lb.selectedIndexes()]
+        rows = sorted({i.row() for i in self.sessions_lb.selectedIndexes() if i.column() == 0})
         if not rows and self.sessions_lb.currentRow() != -1:
             rows = [self.sessions_lb.currentRow()]
         rows = sorted(set(rows), reverse=True)
@@ -1618,7 +1619,7 @@ class DesktopApp(QMainWindow):
         s = self._session()
         if s is None:
             return
-        rows = [i.row() for i in self.subs_lb.selectedIndexes()]
+        rows = sorted({i.row() for i in self.subs_lb.selectedIndexes() if i.column() == 0})
         if not rows and self.subs_lb.currentRow() != -1:
             rows = [self.subs_lb.currentRow()]
         rows = sorted(set(rows), reverse=True)
@@ -1772,9 +1773,6 @@ class DesktopApp(QMainWindow):
         if not paths:
             return
 
-        if len(paths) > 1:
-            paths = list(reversed(paths))
-
         self._save_state_for_undo()
         chosen_dir = os.path.dirname(paths[0])
         resolved_any = False
@@ -1829,7 +1827,7 @@ class DesktopApp(QMainWindow):
         sub = self._sub()
         if sub is None:
             return
-        rows = [i.row() for i in self.files_lb.selectedIndexes()]
+        rows = sorted({i.row() for i in self.files_lb.selectedIndexes() if i.column() == 0})
         if not rows and self.files_lb.currentRow() != -1:
             rows = [self.files_lb.currentRow()]
         rows = sorted(set(rows), reverse=True)
@@ -1845,6 +1843,68 @@ class DesktopApp(QMainWindow):
         for row in reversed(rows):
             sub["files"].pop(row)
         self._refresh_files()
+
+    def _remap_grade_path(self, path, old_grade, new_grade):
+        if not path or not old_grade or not new_grade or old_grade == new_grade:
+            return path
+        norm = path.replace("\\", "/")
+        parts = norm.split("/")
+        changed = False
+        for i, part in enumerate(parts):
+            if part == old_grade:
+                parts[i] = new_grade
+                changed = True
+        base = parts[-1] if parts else ""
+        if old_grade in base:
+            parts[-1] = base.replace(old_grade, new_grade)
+            changed = True
+        if not changed:
+            return path
+        new_path = "/".join(parts)
+        if os.path.exists(new_path):
+            return new_path
+        return path
+
+    def _on_grade_changed(self, _index=None):
+        new_grade = self.grade_combo.currentText() if hasattr(self, "grade_combo") else ""
+        old_grade = getattr(self, "_loaded_grade", "")
+        self._update_preview()
+        if (
+            not old_grade
+            or old_grade == new_grade
+            or old_grade.startswith("Seleccionar")
+            or new_grade.startswith("Seleccionar")
+            or not hasattr(self, "sessions")
+        ):
+            self._loaded_grade = new_grade if new_grade and not new_grade.startswith("Seleccionar") else old_grade
+            return
+
+        self._save_state_for_undo()
+        updated = 0
+        missing = []
+        for s in self.sessions:
+            for sub in s.get("subsessions", []):
+                new_files = []
+                for f in sub.get("files", []):
+                    mapped = self._remap_grade_path(f, old_grade, new_grade)
+                    if mapped != f:
+                        updated += 1
+                        if not os.path.exists(mapped):
+                            missing.append(os.path.basename(mapped))
+                    new_files.append(mapped)
+                sub["files"] = new_files
+
+        self._loaded_grade = new_grade
+        if updated:
+            self._refresh_files()
+            self._log(f"Rutas ajustadas de {old_grade} a {new_grade}: {updated} archivo(s).")
+            if missing:
+                detail = "\n".join(f"  • {name}" for name in missing[:8])
+                extra = f"\n  • … y {len(missing) - 8} más" if len(missing) > 8 else ""
+                self._show_warning(
+                    "Archivos no encontrados",
+                    f"Se actualizó el curso a {new_grade}, pero {len(missing)} archivo(s) no existen en la nueva ruta:\n\n{detail}{extra}"
+                )
 
     def _on_date_changed(self, qdate=None):
         s = self._session()
@@ -2122,6 +2182,8 @@ class DesktopApp(QMainWindow):
 
         dlg.setDefaultButton(yes_btn)
         dlg.exec()
+        return dlg.clickedButton() == yes_btn
+
     def _show_shortcodes_help(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("Etiquetas y Shortcodes — GESA")
@@ -2326,7 +2388,7 @@ class DesktopApp(QMainWindow):
         self.grade_combo = QComboBox()
         self.grade_combo.addItems(["Seleccionar..."] + list(GRADES_INFO.keys()))
         self.grade_combo.setCurrentIndex(0)
-        self.grade_combo.currentIndexChanged.connect(lambda _: self._update_preview())
+        self.grade_combo.currentIndexChanged.connect(self._on_grade_changed)
         g_col.addWidget(self.grade_combo)
         gp_row.addLayout(g_col)
         p_col = QVBoxLayout()
@@ -2737,6 +2799,8 @@ class DesktopApp(QMainWindow):
                         self.output_dir = path
                         self.output_entry.setText(path)
 
+        grade_val = cfg.get("grade") or cfg.get("grado") or ""
+        self._loaded_grade = grade_val if grade_val and not str(grade_val).startswith("Seleccionar") else ""
         for eng, esp in [("grade", "grado"), ("period", "periodo")]:
             v = cfg.get(eng) or cfg.get(esp)
             if v:
@@ -2878,6 +2942,7 @@ class DesktopApp(QMainWindow):
         if not self._ask_yes_no("Limpiar configuraci\u00f3n", "\u00bfDeseas limpiar toda la configuraci\u00f3n actual y dejar la aplicaci\u00f3n por defecto limpia?"):
             return
         self._save_state_for_undo()
+        self._loaded_grade = ""
         self.template_path = ""
         self.output_dir = ""
         self.grade = ""
