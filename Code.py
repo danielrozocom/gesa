@@ -734,11 +734,11 @@ def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="C
     if not text or _has_drawing(p._element):
         return False
 
-    # Check if paragraph contains BOTH Competencia/Competence AND Componente/Component on the same line/paragraph
+    # Both labels on the same line, in either order. Always emit Competencia first.
     m_comp = re.search(r'\b(Competencia|Competence)\s*[:\-]?\s*(.*?)(?=\b(?:Componente|Component)\b|$)', text, re.IGNORECASE)
-    m_compo = re.search(r'\b(Componente|Component)\s*[:\-]?\s*(.*?)$', text, re.IGNORECASE)
+    m_compo = re.search(r'\b(Componente|Component)\s*[:\-]?\s*(.*?)(?=\b(?:Competencia|Competence)\b|$)', text, re.IGNORECASE)
 
-    if m_comp and m_compo and m_comp.start() < m_compo.start() and m_compo.start() > 0:
+    if m_comp and m_compo and m_comp.start() != m_compo.start():
         c1_label, c1_val = m_comp.group(1), m_comp.group(2).strip()
         c2_label, c2_val = m_compo.group(1), m_compo.group(2).strip()
 
@@ -1746,10 +1746,10 @@ def split_inline_competencia_and_componente(doc):
     for p in get_all_paragraphs(doc):
         text = p.text.replace('\t', ' ').strip()
         m_comp = re.search(r'\b(Competencia|Competence)\s*[:\-]?\s*(.*?)(?=\b(?:Componente|Component)\b|$)', text, re.IGNORECASE)
-        m_compo = re.search(r'\b(Componente|Component)\s*[:\-]?\s*(.*?)$', text, re.IGNORECASE)
+        m_compo = re.search(r'\b(Componente|Component)\s*[:\-]?\s*(.*?)(?=\b(?:Competencia|Competence)\b|$)', text, re.IGNORECASE)
         
-        # Si el párrafo contiene AMBOS marcadores a la vez
-        if m_comp and m_compo and m_comp.start() < m_compo.start():
+        # Ambos marcadores en el mismo párrafo, en cualquier orden. Competencia siempre primero.
+        if m_comp and m_compo and m_comp.start() != m_compo.start():
             comp_label = m_comp.group(1)
             comp_val = m_comp.group(2).strip()
             
