@@ -1825,22 +1825,32 @@ class DesktopApp(QMainWindow):
 
     def _remove_files(self):
         sub = self._sub()
-        if sub is None:
+        if sub is None or not sub.get("files"):
             return
-        rows = sorted({i.row() for i in self.files_lb.selectedIndexes() if i.column() == 0})
-        if not rows and self.files_lb.currentRow() != -1:
+        rows = sorted({
+            i.row() for i in self.files_lb.selectedIndexes()
+            if i.column() == 0 and 0 <= i.row() < len(sub["files"])
+        })
+        if not rows and 0 <= self.files_lb.currentRow() < len(sub["files"]):
             rows = [self.files_lb.currentRow()]
-        rows = sorted(set(rows), reverse=True)
         if not rows:
             return
 
         count = len(rows)
-        msg = f"\u00bfDeseas eliminar el archivo seleccionado?" if count == 1 else f"\u00bfDeseas eliminar los {count} archivos seleccionados?"
-        if not self._ask_yes_no("Confirmar eliminaci\u00f3n", msg):
+        msg = "¿Deseas eliminar el archivo seleccionado?" if count == 1 else f"¿Deseas eliminar los {count} archivos seleccionados?"
+        if not self._ask_yes_no("Confirmar eliminación", msg):
+            return
+
+        sub = self._sub()
+        if sub is None or not sub.get("files"):
+            return
+        rows = [r for r in rows if 0 <= r < len(sub["files"])]
+        if not rows:
+            self._refresh_files()
             return
 
         self._save_state_for_undo()
-        for row in reversed(rows):
+        for row in sorted(rows, reverse=True):
             sub["files"].pop(row)
         self._refresh_files()
 
