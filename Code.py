@@ -771,7 +771,7 @@ def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="C
             set_single_line_spacing(p2_obj)
         return True
 
-    m = re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
+    m = re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad\s*(?:\(\s*[eE][sS]\s*\))?|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
     if m:
         raw_val = m.group(2).strip()
         if raw_val.lower().strip(' .:-') in ['es', 'en', '']:
@@ -791,7 +791,12 @@ def _format_competencia_or_componente_paragraph(p, force_lang=None, font_name="C
             elif 'component' in raw_label:
                 label = "Component"
             elif 'habilidad' in raw_label:
-                label = "Habilidad" if raw_label == 'habilidad' else "Habilidades"
+                # Contar habilidades para decidir singular vs plural
+                if raw_val:
+                    parts = [p.strip() for p in re.split(r'[,;]|\s+[yY]\s+', raw_val) if p.strip().strip('.')]
+                    label = "Habilidades" if len(parts) >= 2 else "Habilidad"
+                else:
+                    label = "Habilidades" if 'habilidades' in raw_label else "Habilidad"
             elif 'nivel' in raw_label:
                 label = "Nivel"
             elif 'level' in raw_label:
@@ -839,7 +844,7 @@ def format_paragraph(paragraph, doc_ref):
 
     if is_redundant_header:
         # Don't delete if it's Competencia/Competence/Componente/Component/Habilidad/Nivel or a Question or Bullet!
-        if not re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad|Nivel|Level|Desempeño|Aprendizaje|Estándar|Eje)\s*[:\-]?\s*', text, re.IGNORECASE) and not re.match(r'^\s*\d+[\.\)]', text) and not is_bullet:
+        if not re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad\s*(?:\(\s*[eE][sS]\s*\))?|Nivel|Level|Desempeño|Aprendizaje|Estándar|Eje)\s*[:\-]?\s*', text, re.IGNORECASE) and not re.match(r'^\s*\d+[\.\)]', text) and not is_bullet:
             if _has_drawing(paragraph._element):
                 for t in paragraph._element.xpath('.//w:t'):
                     t.text = ""
@@ -1486,7 +1491,7 @@ def apply_formatting_to_document(doc):
         para = Paragraph(p_elem, doc)
         text = para.text.strip()
         
-        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad)\s*[:\-]', text, re.IGNORECASE))
+        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad\s*(?:\(\s*[eE][sS]\s*\))?)\s*[:\-]', text, re.IGNORECASE))
         
         if not _has_drawing(p_elem):
             if is_comp:
@@ -1606,7 +1611,7 @@ def remove_blank_lines_between_question_parts(doc):
         
         is_question = bool(re.match(r'^\s*\d+[\.\)]', text))
         is_option = bool(re.match(r'^\s*([a-eA-E])[\.\)]', text))
-        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad)\s*:', text, re.IGNORECASE))
+        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad\s*(?:\(\s*[eE][sS]\s*\))?)\s*:', text, re.IGNORECASE))
         
         # If this is a question, option, or competencia/componente, remove following blank lines (unless they contain images/drawings)
         if is_question or is_option or is_comp:
@@ -1814,7 +1819,7 @@ def reorder_competencia_before_question(doc):
                     break
 
                 # Detectar Competencia, Componente, Habilidad, Nivel, etc.
-                if re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\b', np_text, re.IGNORECASE):
+                if re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad\s*(?:\(\s*[eE][sS]\s*\))?|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar)\b', np_text, re.IGNORECASE):
                     comp_paras_to_move.append(np)
 
                 j += 1
@@ -1890,32 +1895,43 @@ def process_habilidades_and_bullets(doc):
         p = all_paras[i]
         text = p.text.strip()
 
-        m_hab = re.match(r'^(Habilidades|Habilidad)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
+        m_hab = re.match(r'^(Habilidades|Habilidad\s*(?:\(\s*[eE][sS]\s*\))?)\s*[:\-]?\s*(.*)$', text, re.IGNORECASE)
         if m_hab:
             val = m_hab.group(2).strip()
             if val.lower().strip(' .:-') in ['es', 'en', '']:
                 val = ""
 
             bullet_items = []
+            trailing_paras = []
             j = i + 1
             while j < len(all_paras):
                 np = all_paras[j]
                 np_text = np.text.strip()
-                if is_bullet_paragraph(np):
-                    bullet_items.append(np)
-                elif not np_text and not _has_drawing(np._element):
+                if not np_text and not _has_drawing(np._element):
                     pass
+                elif is_bullet_paragraph(np):
+                    bullet_items.append(np)
                 else:
-                    break
+                    is_academic_meta = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad\s*(?:\(\s*[eE][sS]\s*\))?|Nivel|Level|Desempeño|Aprendizaje|Afirmación|Estándar|Eje)\b', np_text, re.IGNORECASE))
+                    is_q_or_opt = bool(re.match(r'^\s*(\d+|[a-eA-E])[\.\)]', np_text))
+                    if not is_academic_meta and not is_q_or_opt and not val and not bullet_items and not trailing_paras:
+                        trailing_paras.append(np)
+                    else:
+                        break
                 j += 1
 
-            # Recolectar las habilidades (valor inline + viñetas) para escribirlas
-            # en una sola línea separadas por comas.
+            # Recolectar las habilidades (valor inline + párrafo siguiente + viñetas)
+            # para escribirlas en una sola línea separadas por comas.
             skill_texts = []
+            raw_sources = []
             if val:
-                # El valor inline puede traer varias habilidades separadas por
-                # comas, punto y coma o conjunciones: dividirlas en ítems.
-                for part in re.split(r'[,;]|\s+[yY]\s+', val):
+                raw_sources.append(val)
+            for tp in trailing_paras:
+                raw_sources.append(tp.text.strip())
+
+            for raw_src in raw_sources:
+                # El valor puede traer varias habilidades separadas por comas, punto y coma o 'y'
+                for part in re.split(r'[,;]|\s+[yY]\s+', raw_src):
                     part = part.strip().strip('.')
                     if part:
                         # Norma RAE para listas inline: solo la PRIMERA palabra
@@ -1924,6 +1940,7 @@ def process_habilidades_and_bullets(doc):
                             skill_texts.append(_normalize_case(part).lower())
                         else:
                             skill_texts.append(_normalize_case(part).capitalize())
+
             for b_p in bullet_items:
                 bt = b_p.text.strip()
                 m_bul = BULLET_CHARS_RE.match(bt)
@@ -1931,10 +1948,13 @@ def process_habilidades_and_bullets(doc):
                     bt = bt[m_bul.end():].strip()
                 bt = _normalize_case(bt).rstrip('.')
                 if bt:
-                    skill_texts.append(bt)
+                    if skill_texts:
+                        skill_texts.append(bt.lower())
+                    else:
+                        skill_texts.append(bt.capitalize())
 
             if skill_texts:
-                # Formato exacto (sin viñeta): Habilidades: Comparar, Definir, Relacionar.
+                # Formato exacto (sin viñeta): Habilidades: Comparar, definir, relacionar.
                 # Si son varias (por viñetas o por lista inline con comas),
                 # la etiqueta va en plural y todas en la misma línea.
                 correct_label = "Habilidades" if len(skill_texts) >= 2 else "Habilidad"
@@ -1949,7 +1969,7 @@ def process_habilidades_and_bullets(doc):
                 _add_styled_run(p, f"{correct_label}: ", bold=True, size_pt=11, font_name="Century Gothic")
                 _add_styled_run(p, body_text, bold=False, size_pt=11, font_name="Century Gothic")
 
-                for b_p in bullet_items:
+                for b_p in trailing_paras + bullet_items:
                     _safe_remove_para(b_p)
                 all_paras = get_all_paragraphs(doc)
             else:
@@ -2106,7 +2126,7 @@ def ensure_proper_spacing_between_questions(doc):
         t_str = p.text.strip()
         is_header_elem = (
             bool(re.match(r'^(PART|PARTE)\s+\d+[\s\:\-]', t_str, re.IGNORECASE)) or
-            bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*:', t_str, re.IGNORECASE))
+            bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad\s*(?:\(\s*[eE][sS]\s*\))?)\s*:', t_str, re.IGNORECASE))
         )
         if is_header_elem:
             np = all_paras[i + 1]
@@ -2161,12 +2181,12 @@ def ensure_proper_spacing_between_questions(doc):
         text = p.text.strip()
         
         is_part_header = bool(re.match(r'^(PART|PARTE)\s+\d+[\s\:\-]', text, re.IGNORECASE))
-        is_comp_header = bool(re.match(r'^(Competencia|Competence)\s*:', text, re.IGNORECASE))
+        is_comp_header = bool(re.match(r'^(Competencia|Competence|Habilidades|Habilidad\s*(?:\(\s*[eE][sS]\s*\))?)\s*:', text, re.IGNORECASE))
         is_question_num = bool(re.match(r'^\s*\d+[\.\)]', text))
         
         prev_text = all_paras[i - 1].text.strip() if i > 0 else ""
         prev_is_comp_or_part = (
-            bool(re.match(r'^(Competencia|Competence|Componente|Component)\s*:', prev_text, re.IGNORECASE)) or
+            bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad\s*(?:\(\s*[eE][sS]\s*\))?)\s*:', prev_text, re.IGNORECASE)) or
             bool(re.match(r'^(PART|PARTE)\s+\d+[\s\:\-]', prev_text, re.IGNORECASE))
         )
         
@@ -2533,7 +2553,7 @@ def format_merged_document(final):
         set_single_line_spacing(para)
         text = para.text.strip()
 
-        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad)\s*[:\-]', text, re.IGNORECASE))
+        is_comp = bool(re.match(r'^(Competencia|Competence|Componente|Component|Habilidades|Habilidad\s*(?:\(\s*[eE][sS]\s*\))?)\s*[:\-]', text, re.IGNORECASE))
         if not _has_drawing(p_elem):
             para.alignment = WD_ALIGN_PARAGRAPH.LEFT if is_comp else WD_ALIGN_PARAGRAPH.JUSTIFY
 

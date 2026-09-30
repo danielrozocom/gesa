@@ -50,6 +50,8 @@ Al generar una evaluación, el motor (`Code.py`) aplica automáticamente las sig
   - `Habilidades: Focalizar, completar, seleccionar.`
   - Siguiendo la norma RAE para listas inline, **solo la primera palabra lleva mayúscula inicial**.
   - Con una sola habilidad, la etiqueta queda en singular: `Habilidad: Comparar.`
+  - Se reconocen variantes como `Habilidad(es)`, `Habilidad (es)` y `Habilidades`, normalizándolas a `Habilidad` o `Habilidades` según corresponda.
+  - La línea de habilidades siempre se posiciona **encima del enunciado de la pregunta, sin línea en blanco entre ellas**.
 
 ### 🎨 Formato tipográfico uniforme
 

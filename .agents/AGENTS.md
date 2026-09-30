@@ -8,4 +8,5 @@ d2ff9a553536808f5a2b1c15ce1548f264646ec9# Reglas Generales para el Proyecto GESA
 ## Formateo y Espaciado de Párrafos
 - **Interlineado para Ahorro de Papel**: Para los párrafos vacíos que actúan como separadores entre preguntas u opciones, el tamaño de fuente debe forzarse siempre a **2pt** (`<w:sz w:val="4"/>`). No los infles a 11pt, ya que el objetivo es comprimir visualmente la página.
 - Todo el texto estándar debe ser forzado a fuente **Century Gothic 11pt**.
-- Los encabezados de bloques (Competencia, Componente, PART) siempre deben reordenarse para ubicarse obligatoriamente **antes** de la pregunta asociada.
+- Los encabezados de bloques (Competencia, Componente, Habilidad/Habilidades, PART) siempre deben reordenarse para ubicarse obligatoriamente **antes** de la pregunta asociada, **sin línea en blanco entre ellos y el enunciado**.
+- Se reconocen las variantes de etiqueta `Habilidad`, `Habilidades`, `Habilidad(es)` y `Habilidad (es)`, normalizándolas al singular/plural correcto según el número de habilidades listadas.
