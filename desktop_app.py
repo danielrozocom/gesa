@@ -2750,14 +2750,12 @@ class DesktopApp(QMainWindow):
             "template": self.template_path,
             "output_dir": self.output_dir,
             "grade": self.grade_combo.currentText(),
-            "period": self.period_combo.currentText(),
+            "term": self.period_combo.currentText(),
             "year": self.sessions[0]["year"] if self.sessions else "2026",
             "sessions": [
                 {
                     "name": s["name"],
-                    "day": s["day"],
-                    "month": s["month"],
-                    "year": s["year"],
+                    "date": f"{s.get('year', '2026')}-{MONTH_MAP.get(s.get('month', 'ENE'), 1):02d}-{int(s.get('day', 1)):02d}",
                     "subsessions": [
                         {"name": sub["name"], "files": sub["files"]}
                         for sub in s["subsessions"]
@@ -2811,8 +2809,8 @@ class DesktopApp(QMainWindow):
 
         grade_val = cfg.get("grade") or cfg.get("grado") or ""
         self._loaded_grade = grade_val if grade_val and not str(grade_val).startswith("Seleccionar") else ""
-        for eng, esp in [("grade", "grado"), ("period", "periodo")]:
-            v = cfg.get(eng) or cfg.get(esp)
+        for eng, esp, alt in [("grade", "grado", ""), ("period", "periodo", "term")]:
+            v = cfg.get(eng) or cfg.get(esp) or (cfg.get(alt) if alt else None)
             if v:
                 combo = self.grade_combo if eng == "grade" else self.period_combo
                 idx = combo.findText(v)
@@ -2851,16 +2849,34 @@ class DesktopApp(QMainWindow):
                 sub["name"] = sub.get("name", sn + ".1")
             s["subsessions"] = subs
 
-        self.sessions = [
-            {
+        def _extract_sess_date(s_data):
+            iso_d = s_data.get("date") or cfg.get("date")
+            if iso_d:
+                parts = str(iso_d).strip().split("-")
+                if len(parts) == 3:
+                    try:
+                        y = parts[0]
+                        m_int = int(parts[1])
+                        d = str(int(parts[2]))
+                        m_str = MONTH_REV.get(m_int, "SEP")
+                        return d, m_str, y
+                    except Exception:
+                        pass
+            d = str(s_data.get("day") or s_data.get("dia") or cfg.get("day") or cfg.get("dia", "15"))
+            m = str(s_data.get("month") or s_data.get("mes") or cfg.get("month") or cfg.get("mes", "SEP"))
+            y = str(s_data.get("year") or s_data.get("anio") or cfg.get("year") or cfg.get("anio", "2026"))
+            return d, m, y
+
+        self.sessions = []
+        for i, s in enumerate(raw):
+            d, m, y = _extract_sess_date(s)
+            self.sessions.append({
                 "name": s.get("name", f"Sesi\u00f3n {i+1}"),
-                "day": str(s.get("day", "15")),
-                "month": s.get("month", "SEP"),
-                "year": str(s.get("year", "2026")),
+                "day": d,
+                "month": m,
+                "year": y,
                 "subsessions": s["subsessions"],
-            }
-            for i, s in enumerate(raw)
-        ]
+            })
 
         missing = []
         existing_dirs = set()
