@@ -822,17 +822,11 @@ def format_paragraph(paragraph, doc_ref):
         return
 
     is_bullet = is_bullet_paragraph(paragraph)
-    if not is_bullet:
-        # Strip all indents by default for clean flush-left alignment of normal paragraphs
-        remove_indents(paragraph)
-    else:
-        # For bullet paragraphs, ensure alignment is JUSTIFY and a clean hanging indent exists
+    # Strip ALL indents uniformly (normal paragraphs and bullets alike)
+    # so that no added indentation remains anywhere.
+    remove_indents(paragraph)
+    if is_bullet:
         paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-        pPr = paragraph._element.get_or_add_pPr()
-        ind = pPr.find(qn('w:ind'))
-        if ind is None:
-            ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="240"/>')
-            pPr.append(ind_elem)
 
     # 1. Clean up redundant input document headers and teacher metadata
     is_redundant_header = (
@@ -980,7 +974,7 @@ def inject_list_definitions(doc, start_number=1):
                     <w:lvlJc w:val="left"/>
                     <w:pPr>
                         <w:spacing w:before="0" w:after="0"/>
-                        <w:ind w:left="360" w:hanging="360"/>
+                        <w:ind w:left="0" w:right="0" w:firstLine="0"/>
                     </w:pPr>
                     <w:rPr>
                         <w:b w:val="1"/>
@@ -1004,7 +998,7 @@ def inject_list_definitions(doc, start_number=1):
                     <w:lvlJc w:val="left"/>
                     <w:pPr>
                         <w:spacing w:before="0" w:after="0"/>
-                        <w:ind w:left="360" w:hanging="360"/>
+                        <w:ind w:left="0" w:right="0" w:firstLine="0"/>
                     </w:pPr>
                     <w:rPr>
                         <w:b w:val="1"/>
@@ -1028,7 +1022,7 @@ def inject_list_definitions(doc, start_number=1):
                     <w:lvlJc w:val="left"/>
                     <w:pPr>
                         <w:spacing w:before="0" w:after="0"/>
-                        <w:ind w:left="360" w:hanging="240"/>
+                        <w:ind w:left="0" w:right="0" w:firstLine="0"/>
                     </w:pPr>
                     <w:rPr>
                         <w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic" w:cs="Century Gothic"/>
@@ -1378,8 +1372,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
                 pPr.remove(ind)
             numPr = parse_xml(f'<w:numPr {nsdecls("w")}><w:ilvl w:val="0"/><w:numId w:val="{o_num_id}"/></w:numPr>')
             pPr.append(numPr)
-            ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="360"/>')
-            pPr.append(ind_elem)
+            # No added indentation: keep the option flush-left like the rest
             reorder_pPr(pPr)
             p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             strip_leading_tabs(p)
@@ -1399,8 +1392,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
                 pPr.remove(ind)
             numPr = parse_xml(f'<w:numPr {nsdecls("w")}><w:ilvl w:val="0"/><w:numId w:val="{q_num_id}"/></w:numPr>')
             pPr.append(numPr)
-            ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="360"/>')
-            pPr.append(ind_elem)
+            # No added indentation: keep the question flush-left like the rest
             reorder_pPr(pPr)
             p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             strip_leading_tabs(p)
@@ -1432,8 +1424,7 @@ def apply_native_lists_to_final_doc(final_doc, start_offset=0):
                 pPr.remove(ind)
             numPr = parse_xml(f'<w:numPr {nsdecls("w")}><w:ilvl w:val="0"/><w:numId w:val="9002"/></w:numPr>')
             pPr.append(numPr)
-            ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="240"/>')
-            pPr.append(ind_elem)
+            # No added indentation: keep the bullet flush-left like the rest
             reorder_pPr(pPr)
             p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             strip_leading_tabs(p)
@@ -1471,6 +1462,17 @@ def _fix_numbering_level_fonts(doc, font_name="Century Gothic"):
                     for theme_attr in ['w:asciiTheme', 'w:hAnsiTheme', 'w:eastAsiaTheme', 'w:csTheme', 'w:theme']:
                         if qn(theme_attr) in rFonts.attrib:
                             del rFonts.attrib[qn(theme_attr)]
+
+                # Force black text color on list number/letter glyphs
+                color = rPr.find(f'{{{wns}}}color')
+                if color is None:
+                    color = parse_xml(f'<w:color {nsdecls("w")} w:val="000000"/>')
+                    rPr.append(color)
+                else:
+                    color.set(qn('w:val'), '000000')
+                    for c_attr in ['w:themeColor', 'w:themeShade', 'w:themeTint']:
+                        if qn(c_attr) in color.attrib:
+                            del color.attrib[qn(c_attr)]
     except Exception:
         pass
 
@@ -1555,6 +1557,17 @@ def apply_formatting_to_document(doc):
             rPr.append(szCs)
         else:
             szCs.set(qn('w:val'), '22')
+
+        # Force black text color
+        color = rPr.find(f'{{{wns}}}color')
+        if color is None:
+            color = parse_xml(f'<w:color {nsdecls("w")} w:val="000000"/>')
+            rPr.append(color)
+        else:
+            color.set(qn('w:val'), '000000')
+            for c_attr in ['w:themeColor', 'w:themeShade', 'w:themeTint']:
+                if qn(c_attr) in color.attrib:
+                    del color.attrib[qn(c_attr)]
 
     _fix_numbering_level_fonts(doc, font_name)
 
@@ -1841,12 +1854,8 @@ def _format_bullet_item_clean(p):
             p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
             set_single_line_spacing(p)
 
-            pPr = p._element.get_or_add_pPr()
-            ind = pPr.find(qn('w:ind'))
-            if ind is not None:
-                pPr.remove(ind)
-            ind_elem = parse_xml(f'<w:ind {nsdecls("w")} w:left="360" w:hanging="240"/>')
-            pPr.append(ind_elem)
+            # No added indentation: keep bullets flush-left like the rest
+            remove_indents(p)
 
             r1 = p.add_run(f"{bul_sym}  ")
             r1.bold = False
@@ -1904,7 +1913,17 @@ def process_habilidades_and_bullets(doc):
             # en una sola línea separadas por comas.
             skill_texts = []
             if val:
-                skill_texts.append(_normalize_case(val).rstrip('.'))
+                # El valor inline puede traer varias habilidades separadas por
+                # comas, punto y coma o conjunciones: dividirlas en ítems.
+                for part in re.split(r'[,;]|\s+[yY]\s+', val):
+                    part = part.strip().strip('.')
+                    if part:
+                        # Norma RAE para listas inline: solo la PRIMERA palabra
+                        # de la serie va con mayúscula inicial; el resto en minúscula.
+                        if skill_texts:
+                            skill_texts.append(_normalize_case(part).lower())
+                        else:
+                            skill_texts.append(_normalize_case(part).capitalize())
             for b_p in bullet_items:
                 bt = b_p.text.strip()
                 m_bul = BULLET_CHARS_RE.match(bt)
@@ -1916,6 +1935,8 @@ def process_habilidades_and_bullets(doc):
 
             if skill_texts:
                 # Formato exacto (sin viñeta): Habilidades: Comparar, Definir, Relacionar.
+                # Si son varias (por viñetas o por lista inline con comas),
+                # la etiqueta va en plural y todas en la misma línea.
                 correct_label = "Habilidades" if len(skill_texts) >= 2 else "Habilidad"
                 body_text = ', '.join(skill_texts)
                 if not body_text.endswith(('.', ':', ';', '!', '?')):
@@ -2437,6 +2458,16 @@ def format_merged_document(final):
             rPr.append(szCs)
         else:
             szCs.set(qn('w:val'), '22')
+        # Force black text color
+        color = rPr.find(f'{{{wns}}}color')
+        if color is None:
+            color = parse_xml(f'<w:color {nsdecls("w")} w:val="000000"/>')
+            rPr.append(color)
+        else:
+            color.set(qn('w:val'), '000000')
+            for c_attr in ['w:themeColor', 'w:themeShade', 'w:themeTint']:
+                if qn(c_attr) in color.attrib:
+                    del color.attrib[qn(c_attr)]
 
     # Locate sentinel by text content
     body_children = list(final.element.body)
