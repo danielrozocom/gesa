@@ -1507,6 +1507,7 @@ class DesktopApp(QMainWindow):
                 else:
                     item = QListWidgetItem(base)
                     item.setToolTip(f)
+                item.setData(Qt.ItemDataRole.UserRole, f)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(Qt.CheckState.Checked)
                 self.files_lb.addItem(item)
@@ -1754,14 +1755,30 @@ class DesktopApp(QMainWindow):
         sub = self._sub()
         if sub is None:
             return
-        name_to_path = {os.path.basename(f): f for f in sub["files"]}
         new_list = []
         for i in range(self.files_lb.count()):
-            name = self.files_lb.item(i).text().strip()
-            if name in name_to_path:
-                new_list.append(name_to_path[name])
+            item = self.files_lb.item(i)
+            p = item.data(Qt.ItemDataRole.UserRole)
+            if p:
+                new_list.append(p)
+            else:
+                name = item.text().strip()
+                for orig in sub["files"]:
+                    if os.path.basename(orig) in name:
+                        new_list.append(orig)
+                        break
         if new_list:
+            self._save_state_for_undo()
             sub["files"] = new_list
+
+    def _reverse_files(self):
+        sub = self._sub()
+        if sub is None or len(sub.get("files", [])) < 2:
+            return
+        self._save_state_for_undo()
+        sub["files"].reverse()
+        self._refresh_files()
+        self._log("🔄 Orden de archivos invertido.")
 
     # ─── file management ───────────────────────────────────────
 
@@ -1819,6 +1836,7 @@ class DesktopApp(QMainWindow):
         new = row + direction
         if not 0 <= new < len(sub["files"]):
             return
+        self._save_state_for_undo()
         sub["files"][row], sub["files"][new] = sub["files"][new], sub["files"][row]
         self._refresh_files()
         self.files_lb.setCurrentRow(new)
@@ -2603,6 +2621,10 @@ class DesktopApp(QMainWindow):
         c3_down = self._make_icon_btn("fa5s.chevron-down", "btn-icon", "Bajar", "muted")
         c3_down.clicked.connect(lambda: self._move_file(1))
         c3_header_layout.addWidget(c3_down)
+
+        c3_rev = self._make_icon_btn("fa5s.sort", "btn-icon", "Invertir orden de los archivos", "muted")
+        c3_rev.clicked.connect(self._reverse_files)
+        c3_header_layout.addWidget(c3_rev)
 
         c3_del = self._make_icon_btn("fa5s.trash-alt", "btn-del", "Eliminar archivos", "red")
         c3_del.clicked.connect(self._remove_files)
