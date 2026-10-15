@@ -38,7 +38,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem, QTextEdit, QProgressBar, QFrame, QSplitter,
     QFileDialog, QMessageBox, QAbstractItemView,
     QListView, QDialog, QDialogButtonBox, QCalendarWidget, QSizePolicy, QToolButton,
-    QSplashScreen,
+    QSplashScreen, QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox,
 )
 from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal, QDate, QLocale, QSettings, QRectF
 from PyQt6.QtGui import QTextCharFormat, QColor, QPalette, QShortcut, QKeySequence, QIcon, QPainter, QPixmap
@@ -1148,6 +1148,292 @@ class MissingFilesDialog(QDialog):
             self.list_widget.takeItem(row)
             self.resolved_any = True
             self._update_buttons()
+
+            self._update_buttons()
+
+class BulkDateFixDialog(QDialog):
+    """Carga masiva de DOCX ya generados: autodetecta sesión/fecha del
+    encabezado y permite corregir la fecha según las sesiones del programa."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._parent = parent
+        self.setWindowTitle("Corrector masivo de fechas de encabezado")
+        self.setMinimumSize(860, 520)
+        self._files = []  # list of full paths in table order
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        info = QLabel(
+            "Carga DOCX ya generados por GESA. Se autodetecta la <b>subsesión</b> "
+            "(ej. S1.1, por nombre de archivo y contenido) y la <b>fecha actual</b> "
+            "del encabezado. Edita la columna <b>Fecha nueva</b> si es necesario y pulsa "
+            "<b>Aplicar corrección</b>.<br>"
+            "<span style='color:gray'>Seguro: solo se reemplaza el texto de la fecha "
+            "(encabezado/portada). No se toca formato, imágenes, preguntas ni paginación.</span>"
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
+        self.add_files_btn = QPushButton(" Agregar archivos…")
+        self.add_files_btn.setObjectName("btn-outline")
+        self.add_files_btn.clicked.connect(self._pick_files)
+        top_row.addWidget(self.add_files_btn)
+        self.add_folder_btn = QPushButton(" Agregar carpeta…")
+        self.add_folder_btn.setObjectName("btn-outline")
+        self.add_folder_btn.clicked.connect(self._pick_folder)
+        top_row.addWidget(self.add_folder_btn)
+        self.rescan_btn = QPushButton(" Reanalizar")
+        self.rescan_btn.setObjectName("btn-outline")
+        self.rescan_btn.clicked.connect(self._rescan_all)
+        top_row.addWidget(self.rescan_btn)
+        top_row.addStretch()
+        layout.addLayout(top_row)
+
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(
+            ["Archivo", "Sesión autodetectada", "Fecha actual", "Fecha nueva", "Estado"])
+        hdr = self.table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for c in (1, 2, 3, 4):
+            hdr.setSectionResizeMode(c, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked
+                                   | QAbstractItemView.EditTrigger.SelectedClicked
+                                   | QAbstractItemView.EditTrigger.EditKeyPressed)
+        layout.addWidget(self.table, 1)
+
+        # ── Destino: misma ubicación por defecto ──
+        dest_lbl = QLabel("Destino:")
+        dest_lbl.setProperty("class", "muted")
+        layout.addWidget(dest_lbl)
+
+        opt_row = QHBoxLayout()
+        opt_row.setSpacing(8)
+        self.dest_combo = QComboBox()
+        self.dest_combo.addItems([
+            "Sobrescribir en su misma ubicación (no hay que reubicar)",
+            "Copias junto a los originales (misma carpeta, con _corregido)",
+            "Copias en carpeta elegida…",
+        ])
+        self.dest_combo.setCurrentIndex(0)
+        self.dest_combo.currentIndexChanged.connect(self._on_dest_changed)
+        opt_row.addWidget(self.dest_combo, 1)
+        layout.addLayout(opt_row)
+
+        out_row = QHBoxLayout()
+        out_row.setSpacing(8)
+        self.out_entry = QLineEdit()
+        self.out_entry.setPlaceholderText("Carpeta de salida para copias… (tú eliges dónde)")
+        self.out_entry.setEnabled(False)
+        # Carpeta por defecto: la de Destino del programa, o Documentos
+        try:
+            _default_out = ""
+            if parent is not None and getattr(parent, "output_dir", ""):
+                _default_out = str(getattr(parent, "output_dir") or "")
+            if not _default_out:
+                _default_out = os.path.join(os.path.expanduser("~"), "Documents", "GESA_fechas_corregidas")
+            self.out_entry.setText(_default_out)
+        except Exception:
+            pass
+        out_row.addWidget(self.out_entry, 1)
+        self.out_btn = QPushButton("…")
+        self.out_btn.setObjectName("btn-icon")
+        self.out_btn.setEnabled(False)
+        self.out_btn.setToolTip("Elegir carpeta de salida")
+        self.out_btn.clicked.connect(self._pick_out_dir)
+        out_row.addWidget(self.out_btn)
+        layout.addLayout(out_row)
+
+        bottom_row = QHBoxLayout()
+        bottom_row.addStretch()
+        self.close_btn = QPushButton("Cerrar")
+        self.close_btn.setObjectName("btn-outline")
+        self.close_btn.clicked.connect(self.reject)
+        bottom_row.addWidget(self.close_btn)
+        self.apply_btn = QPushButton(" Aplicar corrección")
+        self.apply_btn.setObjectName("btn-green")
+        self.apply_btn.clicked.connect(self._apply_fixes)
+        bottom_row.addWidget(self.apply_btn)
+        layout.addLayout(bottom_row)
+
+    # ── helpers ──
+    def _session_date_map(self):
+        """Mapa {'S1.1': 'DD/MMM/AAAA', ...} desde las sesiones del programa."""
+        mapping = {}
+        try:
+            sessions = getattr(self._parent, "sessions", []) or []
+            for s in sessions:
+                fecha = f"{str(s.get('day', '1')).zfill(2)}/{s.get('month', 'ENE')}/{s.get('year', '2026')}".upper()
+                for sub in s.get("subsessions", []):
+                    code = str(sub.get("name", "")).replace("Subsesión ", "S").replace("Subsesion ", "S").strip()
+                    if code:
+                        mapping[code.upper()] = fecha
+                # También mapear 'S1' -> fecha de la sesión 1
+                try:
+                    num = str(s.get("name", "")).split()[-1]
+                    mapping[f"S{num}".upper()] = fecha
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return mapping
+
+    def _on_dest_changed(self, idx):
+        use_folder = (idx == 2)
+        self.out_entry.setEnabled(use_folder)
+        self.out_btn.setEnabled(use_folder)
+
+    def _pick_files(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Seleccionar DOCX generados", "", "Word (*.docx);;Todos (*.*)")
+        if paths:
+            self._add_paths(paths)
+
+    def _pick_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Carpeta con DOCX generados")
+        if folder:
+            found = []
+            for root, _, files in os.walk(folder):
+                for f in files:
+                    if f.lower().endswith(".docx") and not f.startswith("~$"):
+                        found.append(os.path.join(root, f))
+            if not found:
+                QMessageBox.information(self, "Sin archivos", "No se encontraron .docx en esa carpeta.")
+                return
+            self._add_paths(sorted(found))
+
+    def _pick_out_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "Carpeta de salida para copias")
+        if d:
+            self.out_entry.setText(d)
+
+    def _add_paths(self, paths):
+        for p in paths:
+            if p in self._files:
+                continue
+            self._files.append(p)
+        self._rescan_all()
+
+    def _rescan_all(self):
+        from Code import (scan_docx_header_info, detect_session_code_from_filename)
+        date_map = self._session_date_map()
+        self.table.setRowCount(0)
+        for path in list(self._files):
+            info = scan_docx_header_info(path)
+            dates = info.get("dates", [])
+            sessions_inside = info.get("sessions", [])
+            code_file = detect_session_code_from_filename(path)
+            code = code_file or (sessions_inside[0] if sessions_inside else "")
+            if not code and sessions_inside:
+                code = sessions_inside[0]
+            current = dates[0] if dates else ("—" if not info.get("error") else f"Error: {info.get('error')}")
+            if len(dates) > 1:
+                current = "; ".join(dates)
+            expected = date_map.get(str(code).upper(), "")
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(os.path.basename(path)))
+            self.table.item(row, 0).setToolTip(path)
+            item_code = QTableWidgetItem(code if code else "—")
+            item_code.setFlags(item_code.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, 1, item_code)
+            item_cur = QTableWidgetItem(current)
+            item_cur.setFlags(item_cur.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if not dates:
+                item_cur.setForeground(QColor("#dc2626"))
+            self.table.setItem(row, 2, item_cur)
+            self.table.setItem(row, 3, QTableWidgetItem(expected))
+            st = QTableWidgetItem("Listo para corregir" if expected else "Revisar fecha nueva")
+            st.setFlags(st.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.table.setItem(row, 4, st)
+        self.table.resizeRowsToContents()
+
+    def _apply_fixes(self):
+        from Code import fix_docx_header_dates
+        if not self._files:
+            QMessageBox.information(self, "Sin archivos", "Agrega archivos .docx primero.")
+            return
+        mode = self.dest_combo.currentIndex() if hasattr(self, "dest_combo") else 0
+        out_dir = self.out_entry.text().strip()
+        if mode == 0:
+            # Sobrescribir en su misma ubicación: no hay que reubicar nada
+            resp = QMessageBox.question(
+                self, "Sobrescribir en su ubicación",
+                "Se corregirá cada archivo en su ubicación actual.\n¿Continuar?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            if resp != QMessageBox.StandardButton.Yes:
+                return
+        elif mode == 1:
+            pass  # copias junto a originales, no requiere carpeta
+        else:
+            if not out_dir:
+                QMessageBox.warning(self, "Falta carpeta", "Elige la carpeta de salida donde guardar las copias corregidas (botón …).")
+                return
+            try:
+                os.makedirs(out_dir, exist_ok=True)
+            except Exception as e:
+                QMessageBox.warning(self, "Carpeta inválida", f"No se pudo crear la carpeta:\n{out_dir}\n\n{e}")
+                return
+        ok, fail = 0, 0
+        for row, path in enumerate(list(self._files)):
+            new_date_item = self.table.item(row, 3)
+            new_date = (new_date_item.text().strip().upper() if new_date_item else "")
+            status_item = self.table.item(row, 4)
+            if not new_date or new_date == "—":
+                if status_item:
+                    status_item.setText("Omitido (sin fecha nueva)")
+                continue
+            try:
+                if mode == 0:
+                    dst = path  # misma ubicación, sin reubicar
+                elif mode == 1:
+                    stem, ext = os.path.splitext(os.path.basename(path))
+                    cand = os.path.join(os.path.dirname(path), f"{stem}_corregido{ext}")
+                    k = 2
+                    while os.path.exists(cand):
+                        cand = os.path.join(os.path.dirname(path), f"{stem}_corregido{k}{ext}")
+                        k += 1
+                    dst = cand
+                else:
+                    base = os.path.basename(path)
+                    dst = os.path.join(out_dir, base)
+                    # Evitar colisiones (misma carpeta o nombres repetidos): _corregido, _corregido2…
+                    if os.path.abspath(dst) == os.path.abspath(path) or os.path.exists(dst):
+                        stem, ext = os.path.splitext(base)
+                        cand = os.path.join(out_dir, f"{stem}_corregido{ext}")
+                        k = 2
+                        while os.path.exists(cand):
+                            cand = os.path.join(out_dir, f"{stem}_corregido{k}{ext}")
+                            k += 1
+                        dst = cand
+                n, old = fix_docx_header_dates(path, dst, new_date)
+                if n > 0:
+                    if status_item:
+                        old_txt = ", ".join(old) if old else "fecha"
+                        status_item.setText(f"Corregido ({old_txt} → {new_date})")
+                    ok += 1
+                    if hasattr(self._parent, "_log"):
+                        self._parent._log(f"✅ {os.path.basename(path)}: {', '.join(old) if old else '?'} → {new_date}")
+                else:
+                    if status_item:
+                        if old:
+                            status_item.setText(f"Sin cambios (ya dice {', '.join(old)})")
+                        else:
+                            status_item.setText("Sin fecha de encabezado detectable")
+                    fail += 1
+            except Exception as e:
+                if status_item:
+                    status_item.setText(f"Error: {e}")
+                fail += 1
+        QMessageBox.information(
+            self, "Corrección terminada",
+            f"Archivos corregidos: {ok}\nSin cambios o con error: {fail}")
+        self._rescan_all()
 
 class GenerateWorker(QObject):
     progress_updated = pyqtSignal(float, str)
@@ -2520,6 +2806,14 @@ class DesktopApp(QMainWindow):
         ie_row.addWidget(clr_btn)
         sidebar_layout.addLayout(ie_row)
 
+        # Corrector masivo de fechas de encabezado (DOCX ya generados)
+        fix_btn = QPushButton(" Corregir fechas en DOCX")
+        fix_btn.setObjectName("btn-outline")
+        fix_btn.setToolTip("Cargar DOCX ya generados y corregir la fecha del encabezado según la sesión")
+        fix_btn.clicked.connect(self._open_bulk_date_fix)
+        self._reg_icon(fix_btn, "fa5s.calendar-check", "blue")
+        sidebar_layout.addWidget(fix_btn)
+
         panels.addWidget(sidebar)
 
         # ─── Workspace ──────────────────────────────────────────
@@ -2763,6 +3057,11 @@ class DesktopApp(QMainWindow):
             self.output_dir = path
             self.output_entry.setText(path)
             self._log(f"Carpeta de salida: {path}")
+
+    def _open_bulk_date_fix(self):
+        dlg = BulkDateFixDialog(self)
+        set_window_dark_mode(dlg.winId(), self._effective_theme() == "dark")
+        dlg.exec()
 
     def _log(self, text):
         self.log.append(text)

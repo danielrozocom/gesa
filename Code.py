@@ -3139,3 +3139,286 @@ def _merge_impl(template_path, file_list, output_path, config_data, start_offset
 
     shutil.rmtree(tmp_dir, ignore_errors=True)
     return cur - 1
+
+
+# ─── CORRECTOR MASIVO DE FECHAS DE ENCABEZADO ──────────────
+# Permite cargar DOCX ya generados por GESA y corregir la fecha del
+# encabezado sin regenerar todo el documento.
+
+SPANISH_MONTH_ABBR = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN",
+                      "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
+
+# Fecha estilo GESA: DD/MMM/AAAA  ej. 15/SEP/2026 , 05-ENE-2025
+HEADER_DATE_RE = re.compile(
+    r'\b(\d{1,2})\s*[/\-.]\s*(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC)'
+    r'\s*[/\-.]\s*(\d{4})\b',
+    re.IGNORECASE,
+)
+
+# Fecha numérica: DD/MM/AAAA , DD-MM-YY ...
+NUMERIC_DATE_RE = re.compile(r'\b(\d{1,2})\s*[/\-]\s*(\d{1,2})\s*[/\-]\s*(\d{2,4})\b')
+
+# Fecha larga: 15 de septiembre de 2026
+LONG_DATE_RE = re.compile(
+    r'\b(\d{1,2})\s+de\s+([A-Za-z\xc0-\xff]+)\s+de\s+(\d{4})\b',
+    re.IGNORECASE,
+)
+
+# Código de subsesión: S1.1 , S2 , S10.3 (también "S 1.1")
+SESSION_CODE_RE = re.compile(r'\bS\s*(\d+(?:\.\d+)?)(?![\d.])', re.IGNORECASE)
+
+# Nombre de archivo típico: ..._S1.1_...  o  ..._S2_...
+FILENAME_SESSION_RE = re.compile(r'[_\-\s]S\s*(\d+(?:\.\d+)?)(?=[_\-\s\.])', re.IGNORECASE)
+
+
+def detect_session_code_from_filename(filename):
+    """Detecta el código de subsesión (ej. 'S1.1') desde el nombre de archivo."""
+    base = os.path.basename(filename or "")
+    m = FILENAME_SESSION_RE.search(base)
+    if m:
+        return f"S{m.group(1)}"
+    m2 = SESSION_CODE_RE.search(base)
+    if m2:
+        return f"S{m2.group(1)}"
+    return ""
+
+
+def normalize_header_date(day, month_abbr, year):
+    """Normaliza a formato GESA: DD/MMM/AAAA (ej. 05/SEP/2026)."""
+    try:
+        d = str(int(day)).zfill(2)
+    except Exception:
+        d = str(day).zfill(2)
+    return f"{d}/{str(month_abbr).upper()}/{year}"
+
+
+def scan_docx_header_info(docx_path):
+    """Inspecciona un DOCX y devuelve fechas/sesiones detectadas.
+
+    Busca en document.xml + headers + footers, incluyendo textos de
+    formas flotantes (drawingml a:t) donde vive el encabezado gráfico.
+    Retorna dict: {"dates": [...], "sessions": [...], "parts": {...}}.
+    """
+    result = {"dates": [], "sessions": [], "parts": {}, "error": None}
+    if not os.path.exists(docx_path):
+        result["error"] = "No existe el archivo."
+        return result
+    try:
+        from lxml import etree
+    except Exception as e:
+        result["error"] = f"lxml no disponible: {e}"
+        return result
+    W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+    try:
+        with zipfile.ZipFile(docx_path, 'r') as zin:
+            names = [n for n in zin.namelist()
+                     if n.startswith('word/')
+                     and n.endswith('.xml')
+                     and '/_rels/' not in n
+                     and n in ('word/document.xml',)
+                     or (n.startswith('word/header') and n.endswith('.xml'))
+                     or (n.startswith('word/footer') and n.endswith('.xml'))]
+            # Nota: la condición anterior incluye document.xml + header*.xml + footer*.xml
+            names = [n for n in zin.namelist()
+                     if (n == 'word/document.xml'
+                         or (n.startswith('word/header') and n.endswith('.xml') and '_rels' not in n)
+                         or (n.startswith('word/footer') and n.endswith('.xml') and '_rels' not in n))]
+            full_texts = {}
+            for name in names:
+                try:
+                    root = etree.fromstring(zin.read(name))
+                except Exception:
+                    continue
+                chunks = []
+                for t in root.iter(f'{{{W_NS}}}t'):
+                    if t.text:
+                        chunks.append(t.text)
+                for t in root.iter(f'{{{A_NS}}}t'):
+                    if t.text:
+                        chunks.append(t.text)
+                joined = "\n".join(chunks)
+                full_texts[name] = joined
+            result["parts"] = {k: v[:2000] for k, v in full_texts.items()}
+            all_text = "\n".join(full_texts.values())
+            seen_dates = []
+            for m in HEADER_DATE_RE.finditer(all_text):
+                norm = normalize_header_date(m.group(1), m.group(2), m.group(3))
+                if norm not in seen_dates:
+                    seen_dates.append(norm)
+            # Solo agregar numéricas si no hay estilo GESA (evita falsos positivos del cuerpo)
+            if not seen_dates:
+                for m in NUMERIC_DATE_RE.finditer(all_text):
+                    raw = m.group(0).strip()
+                    if raw not in seen_dates:
+                        seen_dates.append(raw)
+            result["dates"] = seen_dates
+            seen_sess = []
+            for m in SESSION_CODE_RE.finditer(all_text):
+                code = f"S{m.group(1)}"
+                if code not in seen_sess:
+                    seen_sess.append(code)
+            result["sessions"] = seen_sess
+    except Exception as e:
+        result["error"] = str(e)
+    return result
+
+
+def fix_docx_header_dates(src_path, dst_path, new_date, old_dates=None):
+    """Corrige las fechas del encabezado de un DOCX generado por GESA.
+
+    - src_path: DOCX de entrada.
+    - dst_path: DOCX de salida (puede ser el mismo archivo).
+    - new_date: fecha nueva en formato GESA 'DD/MMM/AAAA' (ej. '15/SEP/2026').
+    - old_dates: lista opcional de fechas a reemplazar. Si es None, se
+      reemplazan todas las fechas estilo encabezado detectadas.
+
+    Solo toca párrafos w:p y textos de formas a:p (encabezado gráfico,
+    headers/footers y portada). No altera fechas dentro del cuerpo de
+    preguntas salvo que tengan formato exacto de encabezado (DD/MMM/AAAA).
+
+    Retorna (num_reemplazos, fechas_antiguas_encontradas).
+    """
+    new_date = str(new_date or "").strip().upper()
+    if not new_date:
+        raise ValueError("new_date vacío.")
+    if not HEADER_DATE_RE.search(new_date) and not NUMERIC_DATE_RE.search(new_date):
+        # Aceptar igual (ej. fecha larga), pero normalizar a mayúsculas
+        new_date = new_date.upper()
+    from lxml import etree
+    W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+
+    def _replace_in_paragraphs(root, tag_ns, p_tag, t_tag, regexes):
+        # Mínimamente invasivo: primero intenta reemplazar dentro de cada
+        # nodo w:t / a:t individual (conserva 100% el formato por runs).
+        # Solo si la fecha está partida entre varios runs se recurre a
+        # reensamblar el párrafo (caso raro).
+        count = 0
+        for p in root.findall(f'.//{{{tag_ns}}}{p_tag}'):
+            t_elems = [t for t in p.iter(f'{{{tag_ns}}}{t_tag}') if t.text]
+            if not t_elems:
+                continue
+            changed = False
+            if old_dates:
+                for t in t_elems:
+                    orig = t.text or ""
+                    new_txt = orig
+                    for od in old_dates:
+                        if od and od.lower() in new_txt.lower():
+                            try:
+                                new_txt = re.sub(re.escape(od), new_date, new_txt, flags=re.IGNORECASE)
+                            except Exception:
+                                new_txt = new_txt.replace(od, new_date)
+                    if new_txt != orig:
+                        t.text = new_txt
+                        changed = True
+            else:
+                for t in t_elems:
+                    orig = t.text or ""
+                    new_txt = orig
+                    for rx in regexes:
+                        new_txt = rx.sub(new_date, new_txt)
+                    if new_txt != orig:
+                        t.text = new_txt
+                        changed = True
+            if changed:
+                count += 1
+                continue
+            # Fallback: fecha partida entre runs del mismo párrafo
+            full = "".join(t.text or "" for t in t_elems)
+            new_full = full
+            if old_dates:
+                for od in old_dates:
+                    if od and od.lower() in new_full.lower():
+                        try:
+                            new_full = re.sub(re.escape(od), new_date, new_full, flags=re.IGNORECASE)
+                        except Exception:
+                            pass
+            else:
+                for rx in regexes:
+                    new_full = rx.sub(new_date, new_full)
+            if new_full != full:
+                # Solo los párrafos con fecha partida llegan aquí;
+                # el resto del documento no se toca.
+                t_elems[0].text = new_full
+                for t in t_elems[1:]:
+                    t.text = ""
+                count += 1
+        return count
+
+    with zipfile.ZipFile(src_path, 'r') as zin:
+        data = {name: zin.read(name) for name in zin.namelist()}
+
+    target_parts = [n for n in data.keys()
+                    if (n == 'word/document.xml'
+                        or (n.startswith('word/header') and n.endswith('.xml') and '_rels' not in n)
+                        or (n.startswith('word/footer') and n.endswith('.xml') and '_rels' not in n))]
+    total = 0
+    found_old = []
+    # Primera pasada: detectar fechas antiguas (para reporte)
+    for pname in target_parts:
+        try:
+            root = etree.fromstring(data[pname])
+        except Exception:
+            continue
+        texts = []
+        for t in root.iter(f'{{{W_NS}}}t'):
+            if t.text:
+                texts.append(t.text)
+        for t in root.iter(f'{{{A_NS}}}t'):
+            if t.text:
+                texts.append(t.text)
+        blob = "\n".join(texts)
+        for m in HEADER_DATE_RE.finditer(blob):
+            norm = normalize_header_date(m.group(1), m.group(2), m.group(3))
+            if norm not in found_old:
+                found_old.append(norm)
+        if not found_old:
+            for m in NUMERIC_DATE_RE.finditer(blob):
+                if m.group(0) not in found_old:
+                    found_old.append(m.group(0))
+
+    regexes = [HEADER_DATE_RE]
+    # Solo incluir numéricas/largas si no se dieron old_dates explícitas y no hay GESA-style
+    if not old_dates and not found_old:
+        regexes = [NUMERIC_DATE_RE, LONG_DATE_RE]
+
+    for pname in target_parts:
+        try:
+            root = etree.fromstring(data[pname])
+        except Exception:
+            continue
+        c1 = _replace_in_paragraphs(root, W_NS, 'p', 't', regexes)
+        c2 = _replace_in_paragraphs(root, A_NS, 'p', 't', regexes)
+        if c1 + c2 > 0:
+            total += c1 + c2
+            data[pname] = etree.tostring(root, xml_declaration=True,
+                                         encoding='UTF-8', standalone=True)
+
+    if total == 0:
+        return 0, found_old
+
+    # Guardar ZIP reconstruido ([Content_Types].xml sin comprimir según OPC)
+    tmp_out = dst_path + '.tmpfix.zip'
+    try:
+        with zipfile.ZipFile(tmp_out, 'w', zipfile.ZIP_DEFLATED) as zout:
+            for name in sorted(data.keys()):
+                blob = data[name]
+                if name == '[Content_Types].xml':
+                    zout.writestr(zipfile.ZipInfo(name), blob, zipfile.ZIP_STORED)
+                else:
+                    zout.writestr(name, blob, zipfile.ZIP_DEFLATED)
+        if os.path.abspath(tmp_out) != os.path.abspath(dst_path):
+            if os.path.exists(dst_path):
+                os.remove(dst_path)
+            shutil.move(tmp_out, dst_path)
+        else:
+            shutil.move(tmp_out, dst_path)
+    finally:
+        if os.path.exists(tmp_out):
+            try:
+                os.remove(tmp_out)
+            except Exception:
+                pass
+    return total, found_old
